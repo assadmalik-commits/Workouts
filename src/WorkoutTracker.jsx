@@ -5,7 +5,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.7';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -22,6 +22,19 @@ const slotKey = (day, variant) => `${day}-${variant}`;
 const ROTATION = VARIANTS.flatMap((variant) =>
   DAYS.map((day) => ({ day, variant, slot: slotKey(day, variant), label: `${day} ${variant}` }))
 );
+
+// The week runs Sunday to Friday, one session a day, with Saturday off.
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SCHEDULE = ROTATION.map((session, i) => ({ ...session, dow: i }));
+const REST_DOW = 6;
+const scheduledFor = (d) => SCHEDULE.find((x) => x.dow === d.getDay()) || null;
+
+// Sunday opens the week, so the rotation resets on its own each Sunday.
+const weekStartStr = (d) => {
+  const start = new Date(d);
+  start.setDate(start.getDate() - start.getDay());
+  return localDateStr(start);
+};
 
 const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
 
@@ -101,9 +114,6 @@ export default function WorkoutTracker() {
   // The date follows the clock until a past session is picked deliberately.
   const [pinned, setPinned] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  // The day the current rotation opened; sessions logged on or after it count
-  // towards this week.
-  const [cycleStart, setCycleStart] = useState(null);
   // Sessions the lifter chose to repeat anyway, for this visit only.
   const [overrides, setOverrides] = useState({});
   const [openEx, setOpenEx] = useState(null);
@@ -130,17 +140,6 @@ export default function WorkoutTracker() {
       setLogs(migrated);
       setBwLogs(b);
 
-      let start = hasEmbeddedData(embedded)
-        ? embedded['cycle-start']
-        : await load('cycle-start', null);
-      if (!start) {
-        // Existing logs belong to the rotation in progress, so open it at the
-        // earliest session on record rather than stranding them.
-        const dates = Object.keys(migrated).sort();
-        start = dates[0] || localDateStr();
-        save('cycle-start', start);
-      }
-      setCycleStart(start);
       setReady(true);
       if (changed) save('workout-logs', migrated);
 
@@ -152,22 +151,28 @@ export default function WorkoutTracker() {
   }, [load, save, setReady]);
 
   // Sessions trained in the current rotation, mapped to the day they were done.
+  const weekStart = weekStartStr(now);
+  const todayPlan = scheduledFor(now);
+  const isRestDay = now.getDay() === REST_DOW;
+
   const cycle = useMemo(() => {
     const done = {};
-    if (!cycleStart) return done;
     for (const [d, slots] of Object.entries(logs)) {
-      if (d < cycleStart) continue;
+      if (d < weekStart) continue;
       for (const [slot, entries] of Object.entries(slots)) {
         if (!Object.values(entries).some(isFilled)) continue;
         if (!done[slot] || d < done[slot]) done[slot] = d;
       }
     }
     return done;
-  }, [logs, cycleStart]);
+  }, [logs, weekStart]);
 
   const doneCount = Object.keys(cycle).length;
   const weekComplete = doneCount >= ROTATION.length;
-  const nextUp = ROTATION.find((r) => !cycle[r.slot]) || null;
+  const nextUp =
+    todayPlan && !cycle[todayPlan.slot]
+      ? todayPlan
+      : ROTATION.find((r) => !cycle[r.slot]) || null;
 
   // A session is spent once it has been trained on some other day this
   // rotation. The day it was actually trained stays open, so a session can be
@@ -183,23 +188,15 @@ export default function WorkoutTracker() {
   const pickVariant = (day) =>
     VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
 
-  const startNextWeek = async () => {
-    const start = localDateStr(now);
-    setCycleStart(start);
-    setOverrides({});
-    await save('cycle-start', start);
-    await publishAll(logs, bwLogs, start);
-  };
-
   // Open on the session that's actually due rather than on a spent one.
   useEffect(() => {
-    if (!ready || openedRef.current || !cycleStart) return;
+    if (!ready || openedRef.current) return;
     openedRef.current = true;
     if (nextUp) {
       setTab(nextUp.day);
       setVariant(nextUp.variant);
     }
-  }, [ready, cycleStart, nextUp]);
+  }, [ready, nextUp]);
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
@@ -245,14 +242,10 @@ export default function WorkoutTracker() {
     return null;
   };
 
-  const publishAll = async (nextLogs, nextBw, nextStart = cycleStart) => {
+  const publishAll = async (nextLogs, nextBw) => {
     const publish = publisherRef.current;
     if (!publish) return true;
-    const res = await publish({
-      'workout-logs': nextLogs,
-      'bodyweight-logs': nextBw,
-      'cycle-start': nextStart,
-    });
+    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
     return res.ok;
   };
 
@@ -423,23 +416,24 @@ export default function WorkoutTracker() {
             })}
           </div>
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <span className="text-xs text-slate-500">
-              {weekComplete
-                ? 'All six sessions done this week'
-                : `${doneCount} of ${ROTATION.length} done this week${
-                    nextUp ? ` · Next: ${nextUp.label}` : ''
-                  }`}
-            </span>
-            {weekComplete && (
-              <button
-                onClick={startNextWeek}
-                className="text-xs font-semibold bg-slate-900 text-white rounded-lg px-3 py-1.5 shrink-0"
-              >
-                Start next week
-              </button>
-            )}
+          <div className="mt-2 text-xs text-slate-500">
+            {doneCount} of {ROTATION.length} done this week
+            {weekComplete
+              ? ' · rotation reopens Sunday'
+              : nextUp
+                ? ` · Next: ${nextUp.label}${
+                    todayPlan && nextUp.slot === todayPlan.slot ? ' (today)' : ''
+                  }`
+                : ''}
           </div>
+          {isRestDay && (
+            <div className="mt-2 bg-slate-100 rounded-lg px-3 py-2 text-xs text-slate-600">
+              Saturday is a rest day.{' '}
+              {weekComplete
+                ? 'The whole week is logged.'
+                : 'Anything still outstanding can be caught up today.'}
+            </div>
+          )}
 
           {locked ? (
             <div className="mt-3 bg-white border border-slate-200 rounded-xl px-4 py-5 text-center">
@@ -447,7 +441,7 @@ export default function WorkoutTracker() {
                 {tab} {variant} is done this week
               </div>
               <div className="text-xs text-slate-500 mt-1">
-                Trained {prettyDate(locked)}. It comes round again next week.
+                Trained {prettyDate(locked)}. It comes round again on Sunday.
               </div>
               {nextUp && (
                 <button
@@ -475,6 +469,9 @@ export default function WorkoutTracker() {
               {tab} {variant} focus:
             </span>{' '}
             {session.focus}
+            <span className="block mt-1 text-slate-400">
+              Scheduled for {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
+            </span>
           </div>
 
           <div className="mt-3 space-y-2">
