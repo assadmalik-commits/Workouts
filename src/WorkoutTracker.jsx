@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon } from 'lucide-react';
+import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '3.5';
+const APP_VERSION = '3.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -118,6 +118,7 @@ export default function WorkoutTracker() {
   const [overrides, setOverrides] = useState({});
   // Saturday is a destination of its own rather than a blank in the strip.
   const [restView, setRestView] = useState(false);
+  const [theme, setTheme] = useState('light');
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
@@ -141,6 +142,11 @@ export default function WorkoutTracker() {
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
+
+      const storedTheme = hasEmbeddedData(embedded)
+        ? embedded.theme
+        : await load('theme', null);
+      if (storedTheme === 'dark' || storedTheme === 'light') setTheme(storedTheme);
 
       setReady(true);
       if (changed) save('workout-logs', migrated);
@@ -251,7 +257,11 @@ export default function WorkoutTracker() {
   const publishAll = async (nextLogs, nextBw) => {
     const publish = publisherRef.current;
     if (!publish) return true;
-    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
+    const res = await publish({
+      'workout-logs': nextLogs,
+      'bodyweight-logs': nextBw,
+      theme,
+    });
     return res.ok;
   };
 
@@ -293,6 +303,19 @@ export default function WorkoutTracker() {
     };
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.appTheme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  // Remember it on the device straight away, so the switch is instant rather
+  // than waiting on the next save.
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    save('theme', next);
+  };
+
   const today = localDateStr(now);
 
   useEffect(() => {
@@ -329,7 +352,16 @@ export default function WorkoutTracker() {
             <Dumbbell size={18} className="text-mint" />
             Training Log
           </h1>
-          <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
+              className="w-9 h-9 rounded-full bg-surface border border-line text-dim flex items-center justify-center"
+            >
+              {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+            </button>
+            <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+          </div>
         </div>
         <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
           {date === today ? clock : `Viewing ${prettyDate(date)}`}

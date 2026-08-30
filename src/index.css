@@ -28,6 +28,25 @@
     system-ui, ui-sans-serif, sans-serif;
 }
 
+/* Light is the default. Light text on a dark ground blooms — the pupil opens in
+   dark surroundings and bright glyphs smear at the edges — which reads as blur
+   however sharp the rendering actually is. Dark ink on a light ground doesn't
+   do that, so the dark theme is the option rather than the rule. */
+:root[data-app-theme='light'] {
+  --color-night: #f2f4f8;
+  --color-surface: #ffffff;
+  --color-raised: #eceff5;
+  --color-line: #ccd3e0;
+  --color-fg: #0c1017;
+  --color-dim: #414d61;
+  --color-mint: #0a6b46;
+  --color-mint-dim: #d5f2e5;
+  --color-amber: #8a4212;
+  --color-amber-dim: #f9e7d6;
+  --color-danger: #a4271c;
+  --color-danger-dim: #fbe3e0;
+}
+
 html {
   background: var(--color-night);
   color-scheme: dark;
@@ -48,8 +67,13 @@ body {
 }
 
 /* Native controls sit on dark surfaces here. */
+html[data-app-theme='light'],
+html[data-app-theme='light'] input[type='date'] {
+  color-scheme: light;
+}
+
 input[type='date'] {
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 /* Digits that line up wherever they're compared. */
