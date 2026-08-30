@@ -1,39 +1,81 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { storage } from './storage';
+import { storage, storageIsDurable } from './storage';
+import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
+import { PROGRAM, DAYS, VARIANTS } from './plan';
 
-const PLAN = {
-  Push: [
-    { name: 'Incline Dumbbell Press', target: '4x6-8' },
-    { name: 'Deficit Push-Ups / Weighted Dips', target: '3x10-12' },
-    { name: 'Cable Flyes (low-to-high)', target: '3x12-15' },
-    { name: 'Seated Dumbbell Shoulder Press', target: '4x8-10' },
-    { name: 'Cable Lateral Raise (lean away)', target: '4x15-20' },
-    { name: 'Rope Tricep Pushdown', target: '3x12 + drop set' },
-    { name: 'Overhead Cable Tricep Extension', target: '3x10-12' },
-  ],
-  Pull: [
-    { name: 'Straight-Arm Pulldown', target: '3x15' },
-    { name: 'Chest-Supported T-Bar Row', target: '4x8-10' },
-    { name: 'Weighted Pull-Ups / Lat Pulldown', target: '4x8-10' },
-    { name: 'Cable Row (wide grip)', target: '3x10-12' },
-    { name: 'Face Pulls', target: '4x15-20' },
-    { name: 'Incline Dumbbell Curl', target: '4x8-10' },
-    { name: 'Cable Curl', target: '3x12 + drop set' },
-  ],
-  Legs: [
-    { name: 'Leg Extensions', target: '3x15' },
-    { name: 'Squats', target: '4x6-8' },
-    { name: 'Romanian Deadlift', target: '4x8-10' },
-    { name: 'Seated Leg Curl', target: '4x10-12' },
-    { name: 'Walking Lunges', target: '3x12/leg' },
-    { name: 'Deficit Calf Raise', target: '4x12-15' },
-    { name: 'Seated Calf Raise', target: '3x15-20' },
-  ],
+// Shown in the header so it's obvious at a glance which build is loaded.
+const APP_VERSION = '2.7';
+
+// The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
+// ahead of it a late-evening session would be filed under the previous day.
+const localDateStr = (d = new Date()) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-const DAYS = Object.keys(PLAN);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const slotKey = (day, variant) => `${day}-${variant}`;
+
+// The week's six sessions in program order. Order can flex in practice — Pull
+// and Legs swap happily — but each one is trained once before any comes round
+// again.
+const ROTATION = VARIANTS.flatMap((variant) =>
+  DAYS.map((day) => ({ day, variant, slot: slotKey(day, variant), label: `${day} ${variant}` }))
+);
+
+// The week runs Sunday to Friday, one session a day, with Saturday off.
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SCHEDULE = ROTATION.map((session, i) => ({ ...session, dow: i }));
+const REST_DOW = 6;
+const scheduledFor = (d) => SCHEDULE.find((x) => x.dow === d.getDay()) || null;
+
+// Sunday opens the week, so the rotation resets on its own each Sunday.
+const weekStartStr = (d) => {
+  const start = new Date(d);
+  start.setDate(start.getDate() - start.getDay());
+  return localDateStr(start);
+};
+
+const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
+
+// A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
+// push-ups. BW says that on its own; spelling out the kg carried is noise.
+const formatWeight = (w) => {
+  if (w === '' || w === undefined || w === null) return '-';
+  if (Number(w) === 0) return 'BW';
+  return `${w}kg`;
+};
+
+const formatSet = (entry) =>
+  `${formatWeight(entry.w)} × ${entry.r || '-'} reps × ${entry.s || '-'} sets`;
+
+const prettyDate = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// v1 stored a day's entries under the bare day name ("Push"); v2 splits each
+// day into an A and a B variant. Existing logs belong to the A variants, which
+// carry v1's exercises.
+function migrate(logs) {
+  let changed = false;
+  const next = {};
+  for (const [date, byDay] of Object.entries(logs || {})) {
+    const slots = {};
+    for (const [key, entries] of Object.entries(byDay || {})) {
+      if (DAYS.includes(key)) {
+        slots[slotKey(key, 'A')] = { ...(slots[slotKey(key, 'A')] || {}), ...entries };
+        changed = true;
+      } else {
+        slots[key] = entries;
+      }
+    }
+    next[date] = slots;
+  }
+  return { logs: next, changed };
+}
 
 function useStorage() {
   const [ready, setReady] = useState(false);
@@ -59,47 +101,158 @@ function useStorage() {
     }
   }, []);
 
-  return { load, save, ready, setReady, error, setError };
+  return { load, save, ready, setReady, error };
 }
 
 export default function WorkoutTracker() {
   const { load, save, ready, setReady, error } = useStorage();
   const [tab, setTab] = useState('Push');
-  const [logs, setLogs] = useState({}); // { date: { Push: { exName: {w,r,s} } } }
+  const [variant, setVariant] = useState('A');
+  const [logs, setLogs] = useState({}); // { date: { "Push-A": { exName: {w,r,s} } } }
   const [bwLogs, setBwLogs] = useState([]); // [{date, weight, notes}]
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(() => localDateStr());
+  // The date follows the clock until a past session is picked deliberately.
+  const [pinned, setPinned] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  // Sessions the lifter chose to repeat anyway, for this visit only.
+  const [overrides, setOverrides] = useState({});
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
   const [bwNotes, setBwNotes] = useState('');
+  const [durable, setDurable] = useState(true);
+  const publisherRef = useRef(null);
+  const openedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
-      const l = await load('workout-logs', {});
-      const b = await load('bodyweight-logs', []);
-      setLogs(l);
+      const embedded = readEmbedded();
+      let stored;
+      let b;
+      if (hasEmbeddedData(embedded)) {
+        stored = embedded['workout-logs'] || {};
+        b = embedded['bodyweight-logs'] || [];
+      } else {
+        stored = await load('workout-logs', {});
+        b = await load('bodyweight-logs', []);
+      }
+      const { logs: migrated, changed } = migrate(stored);
+      setLogs(migrated);
       setBwLogs(b);
-      setReady(true);
-    })();
-  }, [load, setReady]);
 
-  const getEntry = (d, day, exName) => {
-    return (logs[d] && logs[d][day] && logs[d][day][exName]) || { w: '', r: '', s: '' };
+      setReady(true);
+      if (changed) save('workout-logs', migrated);
+
+      // The capability resolves after the first render, or not at all.
+      const publish = await getPublisher();
+      publisherRef.current = publish;
+      setDurable(Boolean(publish) || storageIsDurable());
+    })();
+  }, [load, save, setReady]);
+
+  // Sessions trained in the current rotation, mapped to the day they were done.
+  const weekStart = weekStartStr(now);
+  const todayPlan = scheduledFor(now);
+  const isRestDay = now.getDay() === REST_DOW;
+
+  const cycle = useMemo(() => {
+    const done = {};
+    for (const [d, slots] of Object.entries(logs)) {
+      if (d < weekStart) continue;
+      for (const [slot, entries] of Object.entries(slots)) {
+        if (!Object.values(entries).some(isFilled)) continue;
+        if (!done[slot] || d < done[slot]) done[slot] = d;
+      }
+    }
+    return done;
+  }, [logs, weekStart]);
+
+  const doneCount = Object.keys(cycle).length;
+  const weekComplete = doneCount >= ROTATION.length;
+  const nextUp =
+    todayPlan && !cycle[todayPlan.slot]
+      ? todayPlan
+      : ROTATION.find((r) => !cycle[r.slot]) || null;
+
+  // A session is spent once it has been trained on some other day this
+  // rotation. The day it was actually trained stays open, so a session can be
+  // finished or corrected.
+  const lockedOn = (day, variant) => {
+    const slot = slotKey(day, variant);
+    const doneOn = cycle[slot];
+    if (!doneOn || doneOn === date || overrides[slot]) return null;
+    return doneOn;
   };
 
-  const updateEntry = (field, value) => {
+  // Land on a session that's still available for the day being opened.
+  const pickVariant = (day) =>
+    VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
+
+  // Open on the session that's actually due rather than on a spent one.
+  useEffect(() => {
+    if (!ready || openedRef.current) return;
+    openedRef.current = true;
+    if (nextUp) {
+      setTab(nextUp.day);
+      setVariant(nextUp.variant);
+    }
+  }, [ready, nextUp]);
+
+  const isBodyweight = tab === 'Bodyweight';
+  const slot = slotKey(tab, variant);
+  const locked = isBodyweight ? null : lockedOn(tab, variant);
+  const session = isBodyweight ? null : PROGRAM[tab][variant];
+
+  const getEntry = (exName) =>
+    (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { w: '', r: '', s: '' };
+
+  const updateEntry = (exName, field, value) => {
     setLogs((prev) => {
       const next = { ...prev };
       next[date] = { ...(next[date] || {}) };
-      next[date][tab] = { ...(next[date][tab] || {}) };
-      next[date][tab][openEx] = { ...(next[date][tab][openEx] || {}), [field]: value };
+      next[date][slot] = { ...(next[date][slot] || {}) };
+      next[date][slot][exName] = { ...(next[date][slot][exName] || {}), [field]: value };
       return next;
     });
   };
 
+  // Every earlier date that has entries for the day/variant on screen, newest
+  // first — the running record for this specific session.
+  const history = useMemo(
+    () =>
+      Object.entries(logs)
+        .filter(([d]) => d < date)
+        .map(([d, byDay]) => ({
+          date: d,
+          entries: Object.entries(byDay[slot] || {})
+            .filter(([, entry]) => isFilled(entry))
+            .map(([name, entry]) => ({ name, ...entry })),
+        }))
+        .filter((h) => h.entries.length > 0)
+        .sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [logs, slot, date]
+  );
+
+  // What was lifted on this exercise last time, so the next set has a target.
+  const lastFor = (exName) => {
+    for (const h of history) {
+      const found = h.entries.find((e) => e.name === exName);
+      if (found) return { ...found, date: h.date };
+    }
+    return null;
+  };
+
+  const publishAll = async (nextLogs, nextBw) => {
+    const publish = publisherRef.current;
+    if (!publish) return true;
+    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
+    return res.ok;
+  };
+
   const saveLogs = async () => {
     const ok = await save('workout-logs', logs);
-    if (ok) {
+    const published = await publishAll(logs, bwLogs);
+    if (ok || published) {
       setSavedFlash('workout');
       setTimeout(() => setSavedFlash(null), 1500);
     }
@@ -112,12 +265,33 @@ export default function WorkoutTracker() {
       a.date < b.date ? 1 : -1
     );
     const ok = await save('bodyweight-logs', next);
-    if (ok) {
+    const published = await publishAll(logs, next);
+    if (ok || published) {
       setBwLogs(next);
       setSavedFlash('bw');
       setTimeout(() => setSavedFlash(null), 1500);
     }
   };
+
+  // Re-read the clock periodically, and whenever the page comes back to the
+  // foreground — a phone left locked mid-workout wakes up on the wrong day.
+  useEffect(() => {
+    const tick = () => setNow(new Date());
+    const id = setInterval(tick, 30000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, []);
+
+  const today = localDateStr(now);
+
+  useEffect(() => {
+    if (!pinned) setDate(today);
+  }, [today, pinned]);
 
   useEffect(() => {
     const existing = bwLogs.find((e) => e.date === date);
@@ -138,14 +312,52 @@ export default function WorkoutTracker() {
       <div className="sticky top-0 z-10 bg-slate-900 text-white px-4 pt-4 pb-3 shadow-md">
         <h1 className="text-lg font-bold flex items-center gap-2">
           <Dumbbell size={20} /> Training Log
+          <span className="text-xs font-medium text-slate-400 ml-auto">v{APP_VERSION}</span>
         </h1>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="mt-2 bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
-        />
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              const picked = e.target.value;
+              setDate(picked);
+              setPinned(picked !== today);
+            }}
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
+          />
+          {date !== today && (
+            <button
+              onClick={() => {
+                setDate(today);
+                setPinned(false);
+              }}
+              className="text-xs font-semibold bg-slate-700 text-slate-100 rounded-lg px-3 py-1.5"
+            >
+              Today
+            </button>
+          )}
+        </div>
+        <div className="mt-1.5 text-xs text-slate-400">
+          {date === today
+            ? `Today · ${now.toLocaleDateString(undefined, {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+              })} · ${now.toLocaleTimeString(undefined, {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}`
+            : `Viewing ${prettyDate(date)}`}
+        </div>
       </div>
+
+      {!durable && (
+        <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">
+          <span className="font-semibold">This browser isn’t keeping saved data.</span> Your
+          entries will disappear when you close the page. In Safari, turn off Settings →
+          Apps → Safari → Prevent Cross-Site Tracking, or open this page in another browser.
+        </div>
+      )}
 
       {error && (
         <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
@@ -157,7 +369,11 @@ export default function WorkoutTracker() {
         {[...DAYS, 'Bodyweight'].map((d) => (
           <button
             key={d}
-            onClick={() => setTab(d)}
+            onClick={() => {
+              setTab(d);
+              if (d !== 'Bodyweight') setVariant(pickVariant(d));
+              setOpenEx(null);
+            }}
             className={`py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${
               d === 'Bodyweight' ? 'shrink-0 px-3' : 'flex-1'
             } ${
@@ -172,75 +388,169 @@ export default function WorkoutTracker() {
         ))}
       </div>
 
-      {tab !== 'Bodyweight' ? (
-        <div className="px-4 mt-4 space-y-2">
-          {PLAN[tab].map((ex) => {
-            const entry = getEntry(date, tab, ex.name);
-            const filled = entry.w || entry.r || entry.s;
-            const isOpen = openEx === ex.name;
-            return (
-              <div
-                key={ex.name}
-                className="bg-white rounded-xl border border-slate-200 overflow-hidden"
-              >
+      {!isBodyweight ? (
+        <div className="px-4 mt-4">
+          <div className="flex gap-2 items-center">
+            {VARIANTS.map((v) => {
+              const spent = Boolean(lockedOn(tab, v));
+              const onToday = cycle[slotKey(tab, v)] === date;
+              return (
                 <button
-                  onClick={() => setOpenEx(isOpen ? null : ex.name)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left"
+                  key={v}
+                  onClick={() => {
+                    setVariant(v);
+                    setOpenEx(null);
+                  }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-bold border transition ${
+                    variant === v
+                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                      : spent
+                        ? 'bg-slate-100 text-slate-400 border-slate-200'
+                        : 'bg-white text-slate-500 border-slate-200'
+                  }`}
                 >
-                  <div>
-                    <div className="font-semibold text-slate-800 text-sm">{ex.name}</div>
-                    <div className="text-xs text-slate-400">Target: {ex.target}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {filled ? (
-                      <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
-                        {entry.w || '-'}kg × {entry.r || '-'}
-                      </span>
-                    ) : null}
-                    {isOpen ? (
-                      <ChevronUp size={18} className="text-slate-400" />
-                    ) : (
-                      <ChevronDown size={18} className="text-slate-400" />
-                    )}
-                  </div>
+                  Day {v}
+                  {spent || onToday ? ' ✓' : ''}
                 </button>
-                {isOpen && (
-                  <div className="px-4 pb-4 grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-xs text-slate-400">Weight (kg)</label>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        value={entry.w}
-                        onChange={(e) => updateEntry('w', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-slate-400">Reps</label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        value={entry.r}
-                        onChange={(e) => updateEntry('r', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-slate-400">Sets</label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        value={entry.s}
-                        onChange={(e) => updateEntry('s', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
-                    </div>
-                  </div>
-                )}
+              );
+            })}
+          </div>
+
+          <div className="mt-2 text-xs text-slate-500">
+            {doneCount} of {ROTATION.length} done this week
+            {weekComplete
+              ? ' · rotation reopens Sunday'
+              : nextUp
+                ? ` · Next: ${nextUp.label}${
+                    todayPlan && nextUp.slot === todayPlan.slot ? ' (today)' : ''
+                  }`
+                : ''}
+          </div>
+          {isRestDay && (
+            <div className="mt-2 bg-slate-100 rounded-lg px-3 py-2 text-xs text-slate-600">
+              Saturday is a rest day.{' '}
+              {weekComplete
+                ? 'The whole week is logged.'
+                : 'Anything still outstanding can be caught up today.'}
+            </div>
+          )}
+
+          {locked ? (
+            <div className="mt-3 bg-white border border-slate-200 rounded-xl px-4 py-5 text-center">
+              <div className="text-sm font-semibold text-slate-800">
+                {tab} {variant} is done this week
               </div>
-            );
-          })}
+              <div className="text-xs text-slate-500 mt-1">
+                Trained {prettyDate(locked)}. It comes round again on Sunday.
+              </div>
+              {nextUp && (
+                <button
+                  onClick={() => {
+                    setTab(nextUp.day);
+                    setVariant(nextUp.variant);
+                    setOpenEx(null);
+                  }}
+                  className="mt-4 bg-slate-900 text-white rounded-xl px-4 py-2.5 text-sm font-semibold"
+                >
+                  Go to {nextUp.label}
+                </button>
+              )}
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, [slot]: true }))}
+                className="block mx-auto mt-3 text-xs text-slate-400 underline"
+              >
+                Train it again anyway
+              </button>
+            </div>
+          ) : (
+          <>
+          <div className="mt-3 bg-slate-100 border-l-4 border-slate-900 rounded-r-lg px-3 py-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">
+              {tab} {variant} focus:
+            </span>{' '}
+            {session.focus}
+            <span className="block mt-1 text-slate-400">
+              Scheduled for {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
+            </span>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {session.exercises.map((ex) => {
+              const entry = getEntry(ex.name);
+              const isOpen = openEx === ex.name;
+              const last = lastFor(ex.name);
+              return (
+                <div
+                  key={ex.name}
+                  className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+                >
+                  <button
+                    onClick={() => setOpenEx(isOpen ? null : ex.name)}
+                    className="w-full flex items-start justify-between px-4 py-3 text-left gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-800 text-sm">{ex.name}</div>
+                      <div className="text-xs text-slate-400">Target: {ex.target}</div>
+                      <div className="text-xs text-slate-500 mt-1">{ex.note}</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isFilled(entry) ? (
+                        <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
+                          {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
+                        </span>
+                      ) : null}
+                      {isOpen ? (
+                        <ChevronUp size={18} className="text-slate-400" />
+                      ) : (
+                        <ChevronDown size={18} className="text-slate-400" />
+                      )}
+                    </div>
+                  </button>
+                  {isOpen && (
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-xs text-slate-400">Weight (kg)</label>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            value={entry.w}
+                            onChange={(e) => updateEntry(ex.name, 'w', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Reps</label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={entry.r}
+                            onChange={(e) => updateEntry(ex.name, 'r', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Sets</label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={entry.s}
+                            onChange={(e) => updateEntry(ex.name, 's', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                      {last ? (
+                        <div className="mt-2 text-xs text-slate-400">
+                          Last ({prettyDate(last.date)}): {formatSet(last)}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
           <button
             onClick={saveLogs}
@@ -254,6 +564,29 @@ export default function WorkoutTracker() {
               'Save Today’s Session'
             )}
           </button>
+          </>
+          )}
+
+          <div className="mt-6">
+            <h2 className="text-sm font-semibold text-slate-500 mb-2">
+              History — {tab} {variant}
+            </h2>
+            <div className="space-y-2">
+              {history.length === 0 && (
+                <div className="text-sm text-slate-400">No entries yet.</div>
+              )}
+              {history.map((h) => (
+                <div key={h.date} className="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                  <div className="text-sm font-semibold text-slate-800">{prettyDate(h.date)}</div>
+                  {h.entries.map((e) => (
+                    <div key={e.name} className="text-xs text-slate-500 mt-1">
+                      {e.name}: {formatSet(e)}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : (
         <div className="px-4 mt-4">
@@ -300,7 +633,7 @@ export default function WorkoutTracker() {
                   key={e.date}
                   className="bg-white border border-slate-200 rounded-lg px-3 py-2 flex justify-between items-center gap-2"
                 >
-                  <span className="text-sm text-slate-600">{e.date}</span>
+                  <span className="text-sm text-slate-600">{prettyDate(e.date)}</span>
                   {e.notes ? (
                     <span className="text-xs text-slate-400 truncate flex-1 text-right">
                       {e.notes}
