@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon } from 'lucide-react';
+import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '3.3';
+const APP_VERSION = '3.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -118,6 +118,7 @@ export default function WorkoutTracker() {
   const [overrides, setOverrides] = useState({});
   // Saturday is a destination of its own rather than a blank in the strip.
   const [restView, setRestView] = useState(false);
+  const [theme, setTheme] = useState('light');
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
@@ -141,6 +142,11 @@ export default function WorkoutTracker() {
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
+
+      const storedTheme = hasEmbeddedData(embedded)
+        ? embedded.theme
+        : await load('theme', null);
+      if (storedTheme === 'dark' || storedTheme === 'light') setTheme(storedTheme);
 
       setReady(true);
       if (changed) save('workout-logs', migrated);
@@ -251,7 +257,11 @@ export default function WorkoutTracker() {
   const publishAll = async (nextLogs, nextBw) => {
     const publish = publisherRef.current;
     if (!publish) return true;
-    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
+    const res = await publish({
+      'workout-logs': nextLogs,
+      'bodyweight-logs': nextBw,
+      theme,
+    });
     return res.ok;
   };
 
@@ -293,6 +303,19 @@ export default function WorkoutTracker() {
     };
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.appTheme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  // Remember it on the device straight away, so the switch is instant rather
+  // than waiting on the next save.
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    save('theme', next);
+  };
+
   const today = localDateStr(now);
 
   useEffect(() => {
@@ -329,9 +352,18 @@ export default function WorkoutTracker() {
             <Dumbbell size={18} className="text-mint" />
             Training Log
           </h1>
-          <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
+              className="w-9 h-9 rounded-full bg-surface border border-line text-dim flex items-center justify-center"
+            >
+              {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+            </button>
+            <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+          </div>
         </div>
-        <div className="mt-1 text-[15px] text-dim font-medium">
+        <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
           {date === today ? clock : `Viewing ${prettyDate(date)}`}
         </div>
 
@@ -458,14 +490,14 @@ export default function WorkoutTracker() {
             <div className="font-display text-3xl font-bold uppercase tracking-wide mt-4">
               Rest day
             </div>
-            <div className="text-[15px] text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
+            <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
               Rest it out today, you’ll get stronger tomorrow.
             </div>
-            <div className="mt-6 pt-5 border-t border-line text-[15px] text-dim nums">
+            <div className="mt-6 pt-5 border-t border-line text-[15px] text-dim font-semibold nums">
               {doneCount} of {ROTATION.length} sessions done this week
             </div>
             {weekComplete ? (
-              <div className="text-[15px] text-dim mt-1">The rotation reopens Sunday.</div>
+              <div className="text-[15px] text-dim font-semibold mt-1">The rotation reopens Sunday.</div>
             ) : nextUp ? (
               <button
                 onClick={() => {
@@ -507,7 +539,7 @@ export default function WorkoutTracker() {
                       </span>
                       <span className="font-semibold text-[15px] truncate">{r.label}</span>
                     </div>
-                    <span className="text-[15px] text-dim shrink-0 nums">
+                    <span className="text-[15px] text-dim font-semibold shrink-0 nums">
                       {on ? prettyDate(on) : DOW[r.dow]}
                     </span>
                   </div>
@@ -544,7 +576,7 @@ export default function WorkoutTracker() {
                 </button>
               );
             })}
-            <span className="ml-auto text-sm text-dim text-right font-medium">
+            <span className="ml-auto text-sm text-dim text-right font-semibold">
               {weekComplete
                 ? 'Reopens Sunday'
                 : nextUp
@@ -612,7 +644,7 @@ export default function WorkoutTracker() {
                     {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
                   </span>
                 </div>
-                <div className="text-[15px] text-dim mt-1 leading-relaxed">{session.focus}</div>
+                <div className="text-[15px] text-dim font-semibold mt-1 leading-relaxed">{session.focus}</div>
               </div>
 
               <div className="mt-3 space-y-2">
@@ -641,13 +673,13 @@ export default function WorkoutTracker() {
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="font-bold text-[17px] leading-snug">{ex.name}</div>
-                          <div className="text-[15px] text-dim mt-0.5 nums">{ex.target}</div>
+                          <div className="text-[15px] text-dim font-semibold mt-0.5 nums">{ex.target}</div>
                           {filled ? (
                             <div className="font-display text-xl font-bold text-mint mt-1.5 nums">
                               {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
                             </div>
                           ) : last ? (
-                            <div className="text-[15px] text-dim mt-1.5 nums">
+                            <div className="text-[15px] text-dim font-semibold mt-1.5 nums">
                               Last: {formatSet(last)}
                             </div>
                           ) : null}
@@ -660,7 +692,7 @@ export default function WorkoutTracker() {
                       </button>
                       {isOpen && (
                         <div className="px-4 pb-4">
-                          <div className="text-[15px] text-dim mb-3 leading-relaxed">{ex.note}</div>
+                          <div className="text-[15px] text-dim font-semibold mb-3 leading-relaxed">{ex.note}</div>
                           <div className="grid grid-cols-3 gap-2">
                             {[
                               { k: 'w', label: 'Weight', hint: 'kg', mode: 'decimal' },
@@ -772,7 +804,7 @@ export default function WorkoutTracker() {
                   key={e.date}
                   className="bg-surface border border-line rounded-xl px-4 py-3 flex justify-between items-center gap-2"
                 >
-                  <span className="text-[15px] text-dim font-medium">{prettyDate(e.date)}</span>
+                  <span className="text-[15px] text-dim font-semibold font-semibold">{prettyDate(e.date)}</span>
                   {e.notes ? (
                     <span className="text-xs text-dim truncate flex-1 text-right">{e.notes}</span>
                   ) : null}
