@@ -9,7 +9,17 @@ const slotKey = (day, variant) => `${day}-${variant}`;
 
 const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
 
-const formatSet = (entry) => `${entry.w || '-'}kg × ${entry.r || '-'} × ${entry.s || '-'}`;
+// A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
+// push-ups. Show it as BW, resolved to what was actually being carried when
+// there's a body-weight entry from on or before that day.
+const formatWeight = (w, bodyweight) => {
+  if (w === '' || w === undefined || w === null) return '-';
+  if (Number(w) === 0) return bodyweight ? `BW ${bodyweight}kg` : 'BW';
+  return `${w}kg`;
+};
+
+const formatSet = (entry, bodyweight) =>
+  `${formatWeight(entry.w, bodyweight)} × ${entry.r || '-'} reps × ${entry.s || '-'} sets`;
 
 const prettyDate = (iso) => {
   const d = new Date(`${iso}T00:00:00`);
@@ -89,6 +99,12 @@ export default function WorkoutTracker() {
       if (changed) save('workout-logs', migrated);
     })();
   }, [load, save, setReady]);
+
+  // The most recently logged body weight on or before `iso`, if any.
+  const bodyweightOn = (iso) => {
+    const entry = bwLogs.find((e) => e.date <= iso);
+    return entry ? entry.weight : null;
+  };
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
@@ -268,7 +284,8 @@ export default function WorkoutTracker() {
                     <div className="flex items-center gap-2 shrink-0">
                       {isFilled(entry) ? (
                         <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
-                          {entry.w || '-'}kg × {entry.r || '-'}
+                          {formatWeight(entry.w, bodyweightOn(date))} × {entry.r || '-'} ×{' '}
+                          {entry.s || '-'}
                         </span>
                       ) : null}
                       {isOpen ? (
@@ -314,7 +331,8 @@ export default function WorkoutTracker() {
                       </div>
                       {last ? (
                         <div className="mt-2 text-xs text-slate-400">
-                          Last ({prettyDate(last.date)}): {formatSet(last)}
+                          Last ({prettyDate(last.date)}):{' '}
+                          {formatSet(last, bodyweightOn(last.date))}
                         </div>
                       ) : null}
                     </div>
@@ -350,7 +368,7 @@ export default function WorkoutTracker() {
                   <div className="text-sm font-semibold text-slate-800">{prettyDate(h.date)}</div>
                   {h.entries.map((e) => (
                     <div key={e.name} className="text-xs text-slate-500 mt-1">
-                      {e.name}: {formatSet(e)}
+                      {e.name}: {formatSet(e, bodyweightOn(h.date))}
                     </div>
                   ))}
                 </div>
