@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.7';
+const APP_VERSION = '4.8';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -254,6 +254,26 @@ export default function WorkoutTracker() {
   const pickVariant = (day) =>
     VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
 
+  // The session trained on a given day, if any. Going to a date is going to
+  // what was done on it — landing on whatever session happened to be open
+  // shows an empty form for a day that already has a record.
+  const sessionOn = (iso) => {
+    const slots = logs[iso] || {};
+    return ROTATION.find((r) => Object.values(slots[r.slot] || {}).some(isFilled)) || null;
+  };
+
+  const goToDate = (picked) => {
+    setDate(picked);
+    setPinned(true);
+    setRestView(false);
+    setOpenEx(null);
+    const trained = sessionOn(picked);
+    if (trained) {
+      setTab(trained.day);
+      setVariant(trained.variant);
+    }
+  };
+
   // Coming back to today from a past date left the session you were correcting
   // on screen — and today refuses it, so you landed on its lock card rather
   // than on the session actually due. Only rescue that case; a session today
@@ -476,6 +496,16 @@ export default function WorkoutTracker() {
                   setRestView(false);
                   setTab(planned.day);
                   setVariant(planned.variant);
+                  // A day already trained opens its record on the day it was
+                  // trained; one still to come opens today, ready to log.
+                  const trainedOn = cycle[planned.slot];
+                  if (trainedOn) {
+                    setDate(trainedOn);
+                    setPinned(trainedOn !== today);
+                  } else {
+                    setDate(today);
+                    setPinned(false);
+                  }
                 }}
                 className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
                   (!planned && restView) || (isToday && !restView)
@@ -518,8 +548,7 @@ export default function WorkoutTracker() {
                 returnToToday();
                 return;
               }
-              setDate(picked);
-              setPinned(true);
+              goToDate(picked);
             }}
             className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
           />
