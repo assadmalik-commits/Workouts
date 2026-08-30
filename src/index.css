@@ -18,13 +18,22 @@
   --color-danger: #ff7a7a;
   --color-danger-dim: #3a1c1c;
 
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* The platform's own face. On iOS this is San Francisco, which Apple ships
+     hinted and optically sized for their displays and renders through the
+     system text path — something no downloaded webfont gets. It also removes a
+     network round trip before the first paint. */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
+    system-ui, ui-sans-serif, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto,
+    system-ui, ui-sans-serif, sans-serif;
 }
 
 html {
   background: var(--color-night);
   color-scheme: dark;
+  /* Stop Safari inflating text on its own terms. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
