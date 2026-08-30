@@ -6,11 +6,11 @@
    rather than decorating it. */
 @theme {
   --color-night: #0b0e14;
-  --color-surface: #171d28;
-  --color-raised: #222b3a;
-  --color-line: #3d4859;
+  --color-surface: #19202c;
+  --color-raised: #252f3f;
+  --color-line: #47546a;
   --color-fg: #ffffff;
-  --color-dim: #c5cddb;
+  --color-dim: #d8dfea;
   --color-mint: #3ddc97;
   --color-mint-dim: #14352a;
   --color-amber: #ffb13c;
@@ -18,8 +18,8 @@
   --color-danger: #ff7a7a;
   --color-danger-dim: #3a1c1c;
 
-  --font-sans: 'Barlow', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: 'Barlow Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
 html {
@@ -33,6 +33,9 @@ body {
   /* No -webkit-font-smoothing: antialiased here — on a dark ground it thins
      the strokes, which is exactly what makes light text look washed out. */
   font-weight: 500;
+  /* 17px base: this is read at arm's length, mid-set, often with a pump. */
+  font-size: 17px;
+  line-height: 1.5;
 }
 
 /* Native controls sit on dark surfaces here. */

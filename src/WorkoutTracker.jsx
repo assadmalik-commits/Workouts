@@ -5,7 +5,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '3.2';
+const APP_VERSION = '3.3';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -323,15 +323,15 @@ export default function WorkoutTracker() {
 
   return (
     <div className="min-h-screen bg-night text-fg font-sans pb-32">
-      <header className="sticky top-0 z-20 bg-night/95 backdrop-blur-sm border-b border-line px-4 pt-4 pb-3">
+      <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
         <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
             <Dumbbell size={18} className="text-mint" />
             Training Log
           </h1>
-          <span className="text-[11px] text-dim nums">v{APP_VERSION}</span>
+          <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
         </div>
-        <div className="mt-0.5 text-[13px] text-dim">
+        <div className="mt-1 text-[15px] text-dim font-medium">
           {date === today ? clock : `Viewing ${prettyDate(date)}`}
         </div>
 
@@ -363,7 +363,7 @@ export default function WorkoutTracker() {
                 }`}
               >
                 <span
-                  className={`text-[11px] font-semibold uppercase tracking-wide ${
+                  className={`text-xs font-bold uppercase tracking-wide ${
                     isToday ? 'text-fg' : 'text-dim'
                   }`}
                 >
@@ -409,7 +409,7 @@ export default function WorkoutTracker() {
               Today
             </button>
           )}
-          <span className="ml-auto text-xs text-dim nums">
+          <span className="ml-auto text-[15px] text-dim nums font-semibold">
             {doneCount}/{ROTATION.length} this week
           </span>
         </div>
@@ -461,11 +461,11 @@ export default function WorkoutTracker() {
             <div className="text-[15px] text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
               Rest it out today, you’ll get stronger tomorrow.
             </div>
-            <div className="mt-6 pt-5 border-t border-line text-[13px] text-dim nums">
+            <div className="mt-6 pt-5 border-t border-line text-[15px] text-dim nums">
               {doneCount} of {ROTATION.length} sessions done this week
             </div>
             {weekComplete ? (
-              <div className="text-[13px] text-dim mt-1">The rotation reopens Sunday.</div>
+              <div className="text-[15px] text-dim mt-1">The rotation reopens Sunday.</div>
             ) : nextUp ? (
               <button
                 onClick={() => {
@@ -507,7 +507,7 @@ export default function WorkoutTracker() {
                       </span>
                       <span className="font-semibold text-[15px] truncate">{r.label}</span>
                     </div>
-                    <span className="text-[13px] text-dim shrink-0 nums">
+                    <span className="text-[15px] text-dim shrink-0 nums">
                       {on ? prettyDate(on) : DOW[r.dow]}
                     </span>
                   </div>
@@ -544,7 +544,7 @@ export default function WorkoutTracker() {
                 </button>
               );
             })}
-            <span className="ml-auto text-xs text-dim text-right">
+            <span className="ml-auto text-sm text-dim text-right font-medium">
               {weekComplete
                 ? 'Reopens Sunday'
                 : nextUp
@@ -605,14 +605,14 @@ export default function WorkoutTracker() {
                     {tab} {variant}
                   </span>
                   <span
-                    className={`text-[10px] font-semibold uppercase tracking-widest ${
+                    className={`text-xs font-bold uppercase tracking-widest ${
                       accentOf(variant) === 'mint' ? 'text-mint' : 'text-amber'
                     }`}
                   >
                     {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
                   </span>
                 </div>
-                <div className="text-[13px] text-dim mt-1 leading-relaxed">{session.focus}</div>
+                <div className="text-[15px] text-dim mt-1 leading-relaxed">{session.focus}</div>
               </div>
 
               <div className="mt-3 space-y-2">
@@ -640,14 +640,14 @@ export default function WorkoutTracker() {
                           {filled ? <Check size={13} /> : i + 1}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-base leading-tight">{ex.name}</div>
-                          <div className="text-[13px] text-dim mt-0.5 nums">{ex.target}</div>
+                          <div className="font-bold text-[17px] leading-snug">{ex.name}</div>
+                          <div className="text-[15px] text-dim mt-0.5 nums">{ex.target}</div>
                           {filled ? (
                             <div className="font-display text-xl font-bold text-mint mt-1.5 nums">
                               {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
                             </div>
                           ) : last ? (
-                            <div className="text-[13px] text-dim mt-1.5 nums">
+                            <div className="text-[15px] text-dim mt-1.5 nums">
                               Last: {formatSet(last)}
                             </div>
                           ) : null}
@@ -660,7 +660,7 @@ export default function WorkoutTracker() {
                       </button>
                       {isOpen && (
                         <div className="px-4 pb-4">
-                          <div className="text-[13px] text-dim mb-3 leading-relaxed">{ex.note}</div>
+                          <div className="text-[15px] text-dim mb-3 leading-relaxed">{ex.note}</div>
                           <div className="grid grid-cols-3 gap-2">
                             {[
                               { k: 'w', label: 'Weight', hint: 'kg', mode: 'decimal' },
@@ -668,7 +668,7 @@ export default function WorkoutTracker() {
                               { k: 's', label: 'Sets', hint: '', mode: 'numeric' },
                             ].map((f) => (
                               <div key={f.k}>
-                                <label className="text-[11px] uppercase tracking-widest text-dim font-semibold">
+                                <label className="text-xs uppercase tracking-widest text-dim font-bold">
                                   {f.label}
                                   {f.hint ? ` (${f.hint})` : ''}
                                 </label>
@@ -704,7 +704,7 @@ export default function WorkoutTracker() {
               {history.length === 0 && <div className="text-sm text-dim">No entries yet.</div>}
               {history.map((h) => (
                 <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
-                  <div className="text-sm font-semibold">{prettyDate(h.date)}</div>
+                  <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
                   {h.entries.map((e) => (
                     <div key={e.name} className="text-xs text-dim mt-1 nums">
                       {e.name}: {formatSet(e)}
@@ -726,7 +726,7 @@ export default function WorkoutTracker() {
                 </div>
               </div>
             )}
-            <label className="text-[11px] uppercase tracking-widest text-dim font-semibold">
+            <label className="text-xs uppercase tracking-widest text-dim font-bold">
               Body weight (kg)
             </label>
             <input
@@ -737,7 +737,7 @@ export default function WorkoutTracker() {
               className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-lg font-semibold nums focus:border-mint focus:outline-none"
               placeholder="69"
             />
-            <label className="text-[11px] uppercase tracking-widest text-dim font-semibold mt-4 block">
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
               Notes
             </label>
             <input
@@ -772,7 +772,7 @@ export default function WorkoutTracker() {
                   key={e.date}
                   className="bg-surface border border-line rounded-xl px-4 py-3 flex justify-between items-center gap-2"
                 >
-                  <span className="text-sm text-dim">{prettyDate(e.date)}</span>
+                  <span className="text-[15px] text-dim font-medium">{prettyDate(e.date)}</span>
                   {e.notes ? (
                     <span className="text-xs text-dim truncate flex-1 text-right">{e.notes}</span>
                   ) : null}
@@ -789,7 +789,7 @@ export default function WorkoutTracker() {
 
       {/* Thumb-reachable: the one action taken mid-set. */}
       {!isBodyweight && !locked && !restView && (
-        <div className="fixed bottom-0 left-0 right-0 z-20 bg-night/95 backdrop-blur-sm border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="fixed bottom-0 left-0 right-0 z-20 bg-night border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={saveLogs}
             className="w-full bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
