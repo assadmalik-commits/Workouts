@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun } from 'lucide-react';
+import {
+  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, X,
+} from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '3.6';
+const APP_VERSION = '4.0';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -36,7 +38,14 @@ const weekStartStr = (d) => {
   return localDateStr(start);
 };
 
-const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
+// An entry is a list of sets: [{ w, r }, ...]. One row per set, because sets
+// are not interchangeable — a ramp of 10, 12, 14, 16 recorded as four sets of
+// 16 overstates the work by a quarter and erases the ramp itself.
+const setsOf = (entry) => (Array.isArray(entry?.sets) ? entry.sets : []);
+
+const setFilled = (set) => Boolean(set && (set.w !== '' || set.r !== ''));
+
+const isFilled = (entry) => setsOf(entry).some(setFilled);
 
 // A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
 // push-ups. BW says that on its own; spelling out the kg carried is noise.
@@ -46,8 +55,25 @@ const formatWeight = (w) => {
   return `${w}kg`;
 };
 
-const formatSet = (entry) =>
-  `${formatWeight(entry.w)} × ${entry.r || '-'} reps × ${entry.s || '-'} sets`;
+// Total load moved: every set counted, not one set multiplied.
+const volumeOf = (entry) =>
+  setsOf(entry).reduce((sum, set) => sum + (Number(set.w) || 0) * (Number(set.r) || 0), 0);
+
+// Compact enough for a collapsed row: uniform sets read as "20kg × 8 × 4", a
+// ramp keeps its shape as "10/12/14/16".
+const summarise = (entry) => {
+  const sets = setsOf(entry).filter(setFilled);
+  if (!sets.length) return '';
+  const weights = sets.map((x) => x.w);
+  const reps = sets.map((x) => x.r);
+  const sameW = weights.every((w) => w === weights[0]);
+  const sameR = reps.every((r) => r === reps[0]);
+  if (sameW && sameR) return `${formatWeight(weights[0])} × ${reps[0] || '-'} × ${sets.length}`;
+  if (sameR) return `${weights.map((w) => (Number(w) === 0 ? 'BW' : w)).join('/')}kg × ${reps[0]}`;
+  return sets.map((x) => `${Number(x.w) === 0 ? 'BW' : x.w}×${x.r || '-'}`).join(' · ');
+};
+
+const formatSet = (entry) => summarise(entry) || '-';
 
 const prettyDate = (iso) => {
   const d = new Date(`${iso}T00:00:00`);
@@ -65,12 +91,23 @@ function migrate(logs) {
   for (const [date, byDay] of Object.entries(logs || {})) {
     const slots = {};
     for (const [key, entries] of Object.entries(byDay || {})) {
-      if (DAYS.includes(key)) {
-        slots[slotKey(key, 'A')] = { ...(slots[slotKey(key, 'A')] || {}), ...entries };
+      const target = DAYS.includes(key) ? slotKey(key, 'A') : key;
+      if (DAYS.includes(key)) changed = true;
+      const converted = {};
+      for (const [exName, entry] of Object.entries(entries || {})) {
+        if (Array.isArray(entry?.sets)) {
+          converted[exName] = entry;
+          continue;
+        }
+        // The old shape said "s sets of r at w", so that is what it becomes.
+        // Any set that was actually different can now be corrected in place.
+        const count = Math.max(1, Math.min(20, Number(entry?.s) || 1));
+        converted[exName] = {
+          sets: Array.from({ length: count }, () => ({ w: entry?.w ?? '', r: entry?.r ?? '' })),
+        };
         changed = true;
-      } else {
-        slots[key] = entries;
       }
+      slots[target] = { ...(slots[target] || {}), ...converted };
     }
     next[date] = slots;
   }
@@ -119,6 +156,7 @@ export default function WorkoutTracker() {
   // Saturday is a destination of its own rather than a blank in the strip.
   const [restView, setRestView] = useState(false);
   const [theme, setTheme] = useState('light');
+  const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
@@ -216,17 +254,35 @@ export default function WorkoutTracker() {
   const session = isBodyweight ? null : PROGRAM[tab][variant];
 
   const getEntry = (exName) =>
-    (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { w: '', r: '', s: '' };
+    (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { sets: [] };
 
-  const updateEntry = (exName, field, value) => {
+  const writeSets = (exName, sets) => {
     setLogs((prev) => {
       const next = { ...prev };
       next[date] = { ...(next[date] || {}) };
       next[date][slot] = { ...(next[date][slot] || {}) };
-      next[date][slot][exName] = { ...(next[date][slot][exName] || {}), [field]: value };
+      next[date][slot][exName] = { sets };
       return next;
     });
   };
+
+  const updateSet = (exName, index, field, value) => {
+    const sets = setsOf(getEntry(exName)).map((set, i) =>
+      i === index ? { ...set, [field]: value } : set
+    );
+    writeSets(exName, sets);
+  };
+
+  // A new set starts from the one before it, so an unchanged set is a tap and
+  // only a changed one needs typing.
+  const addSet = (exName) => {
+    const sets = setsOf(getEntry(exName));
+    const previous = sets[sets.length - 1];
+    writeSets(exName, [...sets, previous ? { ...previous } : { w: '', r: '' }]);
+  };
+
+  const removeSet = (exName, index) =>
+    writeSets(exName, setsOf(getEntry(exName)).filter((_, i) => i !== index));
 
   // Every earlier date that has entries for the day/variant on screen, newest
   // first — the running record for this specific session.
@@ -647,78 +703,110 @@ export default function WorkoutTracker() {
                 <div className="text-[15px] text-dim font-semibold mt-1 leading-relaxed">{session.focus}</div>
               </div>
 
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 space-y-1.5">
                 {session.exercises.map((ex, i) => {
                   const entry = getEntry(ex.name);
+                  const sets = setsOf(entry);
                   const isOpen = openEx === ex.name;
                   const last = lastFor(ex.name);
                   const filled = isFilled(entry);
                   return (
                     <div
                       key={ex.name}
-                      className={`bg-surface rounded-2xl border overflow-hidden transition ${
-                        filled ? 'border-mint/30' : 'border-line'
+                      className={`bg-surface rounded-xl border overflow-hidden ${
+                        filled ? 'border-mint/40' : 'border-line'
                       }`}
                     >
                       <button
-                        onClick={() => setOpenEx(isOpen ? null : ex.name)}
-                        className="w-full flex items-start gap-3 px-4 py-3.5 text-left"
+                        onClick={() => {
+                          const next = isOpen ? null : ex.name;
+                          setOpenEx(next);
+                          // Opening an untouched exercise offers its first set.
+                          if (next && setsOf(getEntry(ex.name)).length === 0) addSet(ex.name);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
                       >
                         <span
-                          className={`mt-0.5 w-6 h-6 shrink-0 rounded-lg text-[11px] font-bold flex items-center justify-center nums ${
+                          className={`w-6 h-6 shrink-0 rounded-lg text-[11px] font-bold flex items-center justify-center nums ${
                             filled ? 'bg-mint text-night' : 'bg-raised text-dim'
                           }`}
                         >
                           {filled ? <Check size={13} /> : i + 1}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-[17px] leading-snug">{ex.name}</div>
-                          <div className="text-[15px] text-dim font-semibold mt-0.5 nums">{ex.target}</div>
-                          {filled ? (
-                            <div className="font-display text-xl font-bold text-mint mt-1.5 nums">
-                              {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
-                            </div>
-                          ) : last ? (
-                            <div className="text-[15px] text-dim font-semibold mt-1.5 nums">
-                              Last: {formatSet(last)}
-                            </div>
-                          ) : null}
+                          <div className="font-bold text-[15px] leading-tight truncate">
+                            {ex.name}
+                          </div>
+                          <div className="text-[13px] text-dim nums font-semibold truncate">
+                            {filled ? summarise(entry) : ex.target}
+                          </div>
                         </div>
                         {isOpen ? (
-                          <ChevronUp size={18} className="text-dim shrink-0" />
+                          <ChevronUp size={17} className="text-dim shrink-0" />
                         ) : (
-                          <ChevronDown size={18} className="text-dim shrink-0" />
+                          <ChevronDown size={17} className="text-dim shrink-0" />
                         )}
                       </button>
+
                       {isOpen && (
-                        <div className="px-4 pb-4">
-                          <div className="text-[15px] text-dim font-semibold mb-3 leading-relaxed">{ex.note}</div>
-                          <div className="grid grid-cols-3 gap-2">
-                            {[
-                              { k: 'w', label: 'Weight', hint: 'kg', mode: 'decimal' },
-                              { k: 'r', label: 'Reps', hint: '', mode: 'numeric' },
-                              { k: 's', label: 'Sets', hint: '', mode: 'numeric' },
-                            ].map((f) => (
-                              <div key={f.k}>
-                                <label className="text-xs uppercase tracking-widest text-dim font-bold">
-                                  {f.label}
-                                  {f.hint ? ` (${f.hint})` : ''}
-                                </label>
-                                <input
-                                  type="number"
-                                  inputMode={f.mode}
-                                  value={entry[f.k]}
-                                  onChange={(e) => updateEntry(ex.name, f.k, e.target.value)}
-                                  className="w-full mt-1 bg-raised border border-line rounded-xl px-3 py-3 text-lg font-semibold text-center nums focus:border-mint focus:outline-none"
-                                />
-                              </div>
-                            ))}
+                        <div className="px-3 pb-3">
+                          <div className="flex items-baseline justify-between gap-2 mb-2">
+                            <span className="text-[13px] text-dim nums font-semibold">
+                              Target {ex.target}
+                            </span>
+                            {last && (
+                              <span className="text-[13px] text-dim nums font-semibold truncate">
+                                Last {formatSet(last)}
+                              </span>
+                            )}
                           </div>
-                          {last && (
-                            <div className="mt-2.5 text-xs text-dim nums">
-                              Last ({prettyDate(last.date)}): {formatSet(last)}
+
+                          {sets.map((set, si) => (
+                            <div key={si} className="flex items-center gap-2 mb-1.5">
+                              <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
+                                Set {si + 1}
+                              </span>
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                value={set.w}
+                                placeholder="kg"
+                                onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
+                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                              />
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                value={set.r}
+                                placeholder="reps"
+                                onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
+                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                              />
+                              <button
+                                onClick={() => removeSet(ex.name, si)}
+                                aria-label={`Remove set ${si + 1}`}
+                                className="w-8 h-8 shrink-0 rounded-lg text-dim flex items-center justify-center"
+                              >
+                                <X size={16} />
+                              </button>
                             </div>
-                          )}
+                          ))}
+
+                          <div className="flex items-center gap-2 mt-2">
+                            <button
+                              onClick={() => addSet(ex.name)}
+                              className="flex-1 border border-dashed border-line rounded-lg py-2 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
+                            >
+                              <Plus size={15} /> Add set
+                            </button>
+                            {volumeOf(entry) > 0 && (
+                              <span className="text-[13px] text-dim nums font-semibold shrink-0">
+                                {volumeOf(entry)} kg total
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-[13px] text-dim mt-2.5 leading-relaxed">{ex.note}</p>
                         </div>
                       )}
                     </div>
@@ -728,23 +816,39 @@ export default function WorkoutTracker() {
             </>
           )}
 
-          <div className="mt-8">
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
-              {tab} {variant} history
-            </h2>
-            <div className="space-y-2">
-              {history.length === 0 && <div className="text-sm text-dim">No entries yet.</div>}
-              {history.map((h) => (
-                <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
-                  <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
-                  {h.entries.map((e) => (
-                    <div key={e.name} className="text-xs text-dim mt-1 nums">
-                      {e.name}: {formatSet(e)}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+          {/* Closed by default: what's below the fold should be the session, not the archive. */}
+          <div className="mt-6">
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 bg-surface border border-line rounded-xl px-4 py-3"
+            >
+              <span className="font-bold text-[15px]">
+                {tab} {variant} history
+              </span>
+              <span className="flex items-center gap-2 text-dim">
+                <span className="text-[13px] nums font-semibold">
+                  {history.length === 0 ? 'none yet' : history.length}
+                </span>
+                {showHistory ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+              </span>
+            </button>
+            {showHistory && (
+              <div className="space-y-2 mt-2">
+                {history.length === 0 && (
+                  <div className="text-[15px] text-dim">Nothing logged for this session yet.</div>
+                )}
+                {history.map((h) => (
+                  <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
+                    <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
+                    {h.entries.map((e) => (
+                      <div key={e.name} className="text-[13px] text-dim mt-1 nums font-semibold">
+                        {e.name}: {formatSet(e)}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       ) : (
