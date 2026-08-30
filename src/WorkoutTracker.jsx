@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.2';
+const APP_VERSION = '4.3';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -748,16 +748,21 @@ export default function WorkoutTracker() {
 
                       {isOpen && (
                         <div className="px-3 pb-3">
-                          <div className="flex items-baseline justify-between gap-2 mb-2">
-                            <span className="text-[13px] text-dim nums font-semibold">
-                              Target {ex.target}
-                            </span>
-                            {last && (
-                              <span className="text-[13px] text-dim nums font-semibold truncate">
-                                Last {formatSet(last)}
+                          {/* The row above already shows the target until something
+                              is logged, at which point it shows the sets instead —
+                              so the target only needs repeating once it is gone. */}
+                          {(filled || last) && (
+                            <div className="flex items-baseline justify-between gap-2 mb-2">
+                              <span className="text-[13px] text-dim nums font-semibold">
+                                {filled ? `Target ${ex.target}` : ''}
                               </span>
-                            )}
-                          </div>
+                              {last && (
+                                <span className="text-[13px] text-dim nums font-semibold truncate">
+                                  Last {formatSet(last)}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {sets.map((set, si) => (
                             <div key={si} className="flex items-center gap-2 mb-1.5">
