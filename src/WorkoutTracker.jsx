@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, X,
+  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.2';
+const APP_VERSION = '4.5';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -71,6 +71,19 @@ const summarise = (entry) =>
     .join(' · ');
 
 const formatSet = (entry) => summarise(entry) || '-';
+
+// "4x6-8" is shorthand a lifter has to decode. Say it: "4 sets of 6-8 reps",
+// keeping whatever the program appended — "+ drop set", "/leg".
+const formatTarget = (target) => {
+  const m = String(target).match(/^\s*(\d+)\s*[x×]\s*([\d-]+)(.*)$/i);
+  if (!m) return target;
+  const [, sets, reps, rest] = m;
+  let out = `${sets} ${Number(sets) === 1 ? 'set' : 'sets'} of ${reps} reps`;
+  const tail = rest.trim();
+  if (tail.startsWith('/')) out += ` per ${tail.slice(1)}`;
+  else if (tail) out += ` ${tail}`;
+  return out;
+};
 
 const prettyDate = (iso) => {
   const d = new Date(`${iso}T00:00:00`);
@@ -736,7 +749,7 @@ export default function WorkoutTracker() {
                             {ex.name}
                           </div>
                           <div className="text-[13px] text-dim nums font-semibold truncate">
-                            {filled ? summarise(entry) : ex.target}
+                            {filled ? summarise(entry) : formatTarget(ex.target)}
                           </div>
                         </div>
                         {isOpen ? (
@@ -748,19 +761,24 @@ export default function WorkoutTracker() {
 
                       {isOpen && (
                         <div className="px-3 pb-3">
-                          <div className="flex items-baseline justify-between gap-2 mb-2">
-                            <span className="text-[13px] text-dim nums font-semibold">
-                              Target {ex.target}
-                            </span>
-                            {last && (
-                              <span className="text-[13px] text-dim nums font-semibold truncate">
-                                Last {formatSet(last)}
+                          {/* The row above already shows the target until something
+                              is logged, at which point it shows the sets instead —
+                              so the target only needs repeating once it is gone. */}
+                          {(filled || last) && (
+                            <div className="flex items-baseline justify-between gap-2 mb-2">
+                              <span className="text-[13px] text-dim nums font-semibold">
+                                {filled ? `Target ${formatTarget(ex.target)}` : ''}
                               </span>
-                            )}
-                          </div>
+                              {last && (
+                                <span className="text-[13px] text-dim nums font-semibold truncate">
+                                  Last {formatSet(last)}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {sets.map((set, si) => (
-                            <div key={si} className="flex items-center gap-2 mb-1.5">
+                            <div key={si} className="flex items-center gap-2 mb-1">
                               <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
                                 Set {si + 1}
                               </span>
@@ -768,24 +786,26 @@ export default function WorkoutTracker() {
                                 type="number"
                                 inputMode="decimal"
                                 value={set.w}
-                                placeholder="kg"
+                                placeholder="0"
                                 onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
-                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                                className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                               />
+                              <span className="text-[13px] font-semibold text-dim shrink-0">kg</span>
                               <input
                                 type="number"
                                 inputMode="numeric"
                                 value={set.r}
-                                placeholder="reps"
+                                placeholder="0"
                                 onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
-                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                                className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                               />
+                              <span className="text-[13px] font-semibold text-dim shrink-0">reps</span>
                               <button
                                 onClick={() => removeSet(ex.name, si)}
                                 aria-label={`Remove set ${si + 1}`}
-                                className="w-8 h-8 shrink-0 rounded-lg text-dim flex items-center justify-center"
+                                className="w-7 h-7 shrink-0 rounded-lg text-dim flex items-center justify-center ml-auto"
                               >
-                                <X size={16} />
+                                <Trash2 size={15} />
                               </button>
                             </div>
                           ))}
@@ -793,7 +813,7 @@ export default function WorkoutTracker() {
                           <div className="flex items-center gap-2 mt-2">
                             <button
                               onClick={() => addSet(ex.name)}
-                              className="flex-1 border border-dashed border-line rounded-lg py-2 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
+                              className="border border-dashed border-line rounded-lg px-3 py-1.5 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
                             >
                               <Plus size={15} /> Add set
                             </button>
