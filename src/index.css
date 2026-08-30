@@ -5,12 +5,12 @@
    mint for A sessions, amber for B — so colour carries the program's structure
    rather than decorating it. */
 @theme {
-  --color-base: #0b0e14;
+  --color-night: #0b0e14;
   --color-surface: #151a23;
   --color-raised: #1e2634;
-  --color-line: #2a3343;
-  --color-fg: #edf1f7;
-  --color-dim: #8a94a8;
+  --color-line: #333d50;
+  --color-fg: #ffffff;
+  --color-dim: #aab5c7;
   --color-mint: #3ddc97;
   --color-mint-dim: #14352a;
   --color-amber: #ffb13c;
@@ -23,14 +23,16 @@
 }
 
 html {
-  background: var(--color-base);
+  background: var(--color-night);
   color-scheme: dark;
 }
 
 body {
-  background: var(--color-base);
+  background: var(--color-night);
   color: var(--color-fg);
-  -webkit-font-smoothing: antialiased;
+  /* No -webkit-font-smoothing: antialiased here — on a dark ground it thins
+     the strokes, which is exactly what makes light text look washed out. */
+  font-weight: 500;
 }
 
 /* Native controls sit on dark surfaces here. */
