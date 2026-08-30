@@ -5,9 +5,14 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.5';
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
+// ahead of it a late-evening session would be filed under the previous day.
+const localDateStr = (d = new Date()) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 const slotKey = (day, variant) => `${day}-${variant}`;
 
@@ -85,7 +90,10 @@ export default function WorkoutTracker() {
   const [variant, setVariant] = useState('A');
   const [logs, setLogs] = useState({}); // { date: { "Push-A": { exName: {w,r,s} } } }
   const [bwLogs, setBwLogs] = useState([]); // [{date, weight, notes}]
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(() => localDateStr());
+  // The date follows the clock until a past session is picked deliberately.
+  const [pinned, setPinned] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
@@ -192,6 +200,26 @@ export default function WorkoutTracker() {
     }
   };
 
+  // Re-read the clock periodically, and whenever the page comes back to the
+  // foreground — a phone left locked mid-workout wakes up on the wrong day.
+  useEffect(() => {
+    const tick = () => setNow(new Date());
+    const id = setInterval(tick, 30000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, []);
+
+  const today = localDateStr(now);
+
+  useEffect(() => {
+    if (!pinned) setDate(today);
+  }, [today, pinned]);
+
   useEffect(() => {
     const existing = bwLogs.find((e) => e.date === date);
     setBwInput(existing ? existing.weight : '');
@@ -213,12 +241,41 @@ export default function WorkoutTracker() {
           <Dumbbell size={20} /> Training Log
           <span className="text-xs font-medium text-slate-400 ml-auto">v{APP_VERSION}</span>
         </h1>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="mt-2 bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
-        />
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              const picked = e.target.value;
+              setDate(picked);
+              setPinned(picked !== today);
+            }}
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
+          />
+          {date !== today && (
+            <button
+              onClick={() => {
+                setDate(today);
+                setPinned(false);
+              }}
+              className="text-xs font-semibold bg-slate-700 text-slate-100 rounded-lg px-3 py-1.5"
+            >
+              Today
+            </button>
+          )}
+        </div>
+        <div className="mt-1.5 text-xs text-slate-400">
+          {date === today
+            ? `Today · ${now.toLocaleDateString(undefined, {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+              })} · ${now.toLocaleTimeString(undefined, {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}`
+            : `Viewing ${prettyDate(date)}`}
+        </div>
       </div>
 
       {!durable && (
