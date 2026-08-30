@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.6';
+const APP_VERSION = '4.7';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -254,6 +254,21 @@ export default function WorkoutTracker() {
   const pickVariant = (day) =>
     VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
 
+  // Coming back to today from a past date left the session you were correcting
+  // on screen — and today refuses it, so you landed on its lock card rather
+  // than on the session actually due. Only rescue that case; a session today
+  // still allows is left alone.
+  const returnToToday = () => {
+    setDate(today);
+    setPinned(false);
+    const trainedOn = cycle[slotKey(tab, variant)];
+    if (trainedOn && trainedOn !== today && nextUp) {
+      setTab(nextUp.day);
+      setVariant(nextUp.variant);
+      setOpenEx(null);
+    }
+  };
+
   // Open on the session that's actually due rather than on a spent one.
   useEffect(() => {
     if (!ready || openedRef.current) return;
@@ -499,17 +514,18 @@ export default function WorkoutTracker() {
             value={date}
             onChange={(e) => {
               const picked = e.target.value;
+              if (picked === today) {
+                returnToToday();
+                return;
+              }
               setDate(picked);
-              setPinned(picked !== today);
+              setPinned(true);
             }}
             className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
           />
           {date !== today && (
             <button
-              onClick={() => {
-                setDate(today);
-                setPinned(false);
-              }}
+              onClick={returnToToday}
               className="text-xs font-semibold text-night bg-fg rounded-lg px-3 py-1.5"
             >
               Today
