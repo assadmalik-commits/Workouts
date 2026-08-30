@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+/* Dark-first by intent, not as an inverted afterthought: this gets used in dim
+   gyms, at night, on OLED phones. The two accents are the rotation's own —
+   mint for A sessions, amber for B — so colour carries the program's structure
+   rather than decorating it. */
+@theme {
+  --color-night: #0b0e14;
+  --color-surface: #151a23;
+  --color-raised: #1e2634;
+  --color-line: #333d50;
+  --color-fg: #ffffff;
+  --color-dim: #aab5c7;
+  --color-mint: #3ddc97;
+  --color-mint-dim: #14352a;
+  --color-amber: #ffb13c;
+  --color-amber-dim: #3a2c14;
+  --color-danger: #ff7a7a;
+  --color-danger-dim: #3a1c1c;
+
+  --font-sans: 'Barlow', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: 'Barlow Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
+}
+
+html {
+  background: var(--color-night);
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-night);
+  color: var(--color-fg);
+  /* No -webkit-font-smoothing: antialiased here — on a dark ground it thins
+     the strokes, which is exactly what makes light text look washed out. */
+  font-weight: 500;
+}
+
+/* Native controls sit on dark surfaces here. */
+input[type='date'] {
+  color-scheme: dark;
+}
+
+/* Digits that line up wherever they're compared. */
+.nums {
+  font-variant-numeric: tabular-nums;
+}
