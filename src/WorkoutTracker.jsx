@@ -3,6 +3,9 @@ import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-
 import { storage } from './storage';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
+// Shown in the header so it's obvious at a glance which build is loaded.
+const APP_VERSION = '2.1';
+
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 const slotKey = (day, variant) => `${day}-${variant}`;
@@ -190,6 +193,7 @@ export default function WorkoutTracker() {
       <div className="sticky top-0 z-10 bg-slate-900 text-white px-4 pt-4 pb-3 shadow-md">
         <h1 className="text-lg font-bold flex items-center gap-2">
           <Dumbbell size={20} /> Training Log
+          <span className="text-xs font-medium text-slate-400 ml-auto">v{APP_VERSION}</span>
         </h1>
         <input
           type="date"
