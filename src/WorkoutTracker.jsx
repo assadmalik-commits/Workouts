@@ -1,39 +1,43 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { storage } from './storage';
+import { PROGRAM, DAYS, VARIANTS } from './plan';
 
-const PLAN = {
-  Push: [
-    { name: 'Incline Dumbbell Press', target: '4x6-8' },
-    { name: 'Deficit Push-Ups / Weighted Dips', target: '3x10-12' },
-    { name: 'Cable Flyes (low-to-high)', target: '3x12-15' },
-    { name: 'Seated Dumbbell Shoulder Press', target: '4x8-10' },
-    { name: 'Cable Lateral Raise (lean away)', target: '4x15-20' },
-    { name: 'Rope Tricep Pushdown', target: '3x12 + drop set' },
-    { name: 'Overhead Cable Tricep Extension', target: '3x10-12' },
-  ],
-  Pull: [
-    { name: 'Straight-Arm Pulldown', target: '3x15' },
-    { name: 'Chest-Supported T-Bar Row', target: '4x8-10' },
-    { name: 'Weighted Pull-Ups / Lat Pulldown', target: '4x8-10' },
-    { name: 'Cable Row (wide grip)', target: '3x10-12' },
-    { name: 'Face Pulls', target: '4x15-20' },
-    { name: 'Incline Dumbbell Curl', target: '4x8-10' },
-    { name: 'Cable Curl', target: '3x12 + drop set' },
-  ],
-  Legs: [
-    { name: 'Leg Extensions', target: '3x15' },
-    { name: 'Squats', target: '4x6-8' },
-    { name: 'Romanian Deadlift', target: '4x8-10' },
-    { name: 'Seated Leg Curl', target: '4x10-12' },
-    { name: 'Walking Lunges', target: '3x12/leg' },
-    { name: 'Deficit Calf Raise', target: '4x12-15' },
-    { name: 'Seated Calf Raise', target: '3x15-20' },
-  ],
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+const slotKey = (day, variant) => `${day}-${variant}`;
+
+const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
+
+const formatSet = (entry) => `${entry.w || '-'}kg × ${entry.r || '-'} × ${entry.s || '-'}`;
+
+const prettyDate = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-const DAYS = Object.keys(PLAN);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// v1 stored a day's entries under the bare day name ("Push"); v2 splits each
+// day into an A and a B variant. Existing logs belong to the A variants, which
+// carry v1's exercises.
+function migrate(logs) {
+  let changed = false;
+  const next = {};
+  for (const [date, byDay] of Object.entries(logs || {})) {
+    const slots = {};
+    for (const [key, entries] of Object.entries(byDay || {})) {
+      if (DAYS.includes(key)) {
+        slots[slotKey(key, 'A')] = { ...(slots[slotKey(key, 'A')] || {}), ...entries };
+        changed = true;
+      } else {
+        slots[key] = entries;
+      }
+    }
+    next[date] = slots;
+  }
+  return { logs: next, changed };
+}
 
 function useStorage() {
   const [ready, setReady] = useState(false);
@@ -59,13 +63,14 @@ function useStorage() {
     }
   }, []);
 
-  return { load, save, ready, setReady, error, setError };
+  return { load, save, ready, setReady, error };
 }
 
 export default function WorkoutTracker() {
   const { load, save, ready, setReady, error } = useStorage();
   const [tab, setTab] = useState('Push');
-  const [logs, setLogs] = useState({}); // { date: { Push: { exName: {w,r,s} } } }
+  const [variant, setVariant] = useState('A');
+  const [logs, setLogs] = useState({}); // { date: { "Push-A": { exName: {w,r,s} } } }
   const [bwLogs, setBwLogs] = useState([]); // [{date, weight, notes}]
   const [date, setDate] = useState(todayStr());
   const [openEx, setOpenEx] = useState(null);
@@ -75,26 +80,57 @@ export default function WorkoutTracker() {
 
   useEffect(() => {
     (async () => {
-      const l = await load('workout-logs', {});
+      const stored = await load('workout-logs', {});
       const b = await load('bodyweight-logs', []);
-      setLogs(l);
+      const { logs: migrated, changed } = migrate(stored);
+      setLogs(migrated);
       setBwLogs(b);
       setReady(true);
+      if (changed) save('workout-logs', migrated);
     })();
-  }, [load, setReady]);
+  }, [load, save, setReady]);
 
-  const getEntry = (d, day, exName) => {
-    return (logs[d] && logs[d][day] && logs[d][day][exName]) || { w: '', r: '', s: '' };
-  };
+  const isBodyweight = tab === 'Bodyweight';
+  const slot = slotKey(tab, variant);
+  const session = isBodyweight ? null : PROGRAM[tab][variant];
 
-  const updateEntry = (field, value) => {
+  const getEntry = (exName) =>
+    (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { w: '', r: '', s: '' };
+
+  const updateEntry = (exName, field, value) => {
     setLogs((prev) => {
       const next = { ...prev };
       next[date] = { ...(next[date] || {}) };
-      next[date][tab] = { ...(next[date][tab] || {}) };
-      next[date][tab][openEx] = { ...(next[date][tab][openEx] || {}), [field]: value };
+      next[date][slot] = { ...(next[date][slot] || {}) };
+      next[date][slot][exName] = { ...(next[date][slot][exName] || {}), [field]: value };
       return next;
     });
+  };
+
+  // Every earlier date that has entries for the day/variant on screen, newest
+  // first — the running record for this specific session.
+  const history = useMemo(
+    () =>
+      Object.entries(logs)
+        .filter(([d]) => d < date)
+        .map(([d, byDay]) => ({
+          date: d,
+          entries: Object.entries(byDay[slot] || {})
+            .filter(([, entry]) => isFilled(entry))
+            .map(([name, entry]) => ({ name, ...entry })),
+        }))
+        .filter((h) => h.entries.length > 0)
+        .sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [logs, slot, date]
+  );
+
+  // What was lifted on this exercise last time, so the next set has a target.
+  const lastFor = (exName) => {
+    for (const h of history) {
+      const found = h.entries.find((e) => e.name === exName);
+      if (found) return { ...found, date: h.date };
+    }
+    return null;
   };
 
   const saveLogs = async () => {
@@ -157,7 +193,11 @@ export default function WorkoutTracker() {
         {[...DAYS, 'Bodyweight'].map((d) => (
           <button
             key={d}
-            onClick={() => setTab(d)}
+            onClick={() => {
+              setTab(d);
+              setVariant('A');
+              setOpenEx(null);
+            }}
             className={`py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${
               d === 'Bodyweight' ? 'shrink-0 px-3' : 'flex-1'
             } ${
@@ -172,75 +212,117 @@ export default function WorkoutTracker() {
         ))}
       </div>
 
-      {tab !== 'Bodyweight' ? (
-        <div className="px-4 mt-4 space-y-2">
-          {PLAN[tab].map((ex) => {
-            const entry = getEntry(date, tab, ex.name);
-            const filled = entry.w || entry.r || entry.s;
-            const isOpen = openEx === ex.name;
-            return (
-              <div
-                key={ex.name}
-                className="bg-white rounded-xl border border-slate-200 overflow-hidden"
-              >
+      {!isBodyweight ? (
+        <div className="px-4 mt-4">
+          <div className="flex gap-2">
+            {VARIANTS.map((v) => {
+              const done = Object.keys(logs[date]?.[slotKey(tab, v)] || {}).some((name) =>
+                isFilled(logs[date][slotKey(tab, v)][name])
+              );
+              return (
                 <button
-                  onClick={() => setOpenEx(isOpen ? null : ex.name)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left"
+                  key={v}
+                  onClick={() => {
+                    setVariant(v);
+                    setOpenEx(null);
+                  }}
+                  className={`px-5 py-1.5 rounded-full text-sm font-bold border transition ${
+                    variant === v
+                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                      : 'bg-white text-slate-500 border-slate-200'
+                  }`}
                 >
-                  <div>
-                    <div className="font-semibold text-slate-800 text-sm">{ex.name}</div>
-                    <div className="text-xs text-slate-400">Target: {ex.target}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {filled ? (
-                      <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
-                        {entry.w || '-'}kg × {entry.r || '-'}
-                      </span>
-                    ) : null}
-                    {isOpen ? (
-                      <ChevronUp size={18} className="text-slate-400" />
-                    ) : (
-                      <ChevronDown size={18} className="text-slate-400" />
-                    )}
-                  </div>
+                  Day {v}
+                  {done ? ' •' : ''}
                 </button>
-                {isOpen && (
-                  <div className="px-4 pb-4 grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-xs text-slate-400">Weight (kg)</label>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        value={entry.w}
-                        onChange={(e) => updateEntry('w', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
+              );
+            })}
+          </div>
+
+          <div className="mt-3 bg-slate-100 border-l-4 border-slate-900 rounded-r-lg px-3 py-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">
+              {tab} {variant} focus:
+            </span>{' '}
+            {session.focus}
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {session.exercises.map((ex) => {
+              const entry = getEntry(ex.name);
+              const isOpen = openEx === ex.name;
+              const last = lastFor(ex.name);
+              return (
+                <div
+                  key={ex.name}
+                  className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+                >
+                  <button
+                    onClick={() => setOpenEx(isOpen ? null : ex.name)}
+                    className="w-full flex items-start justify-between px-4 py-3 text-left gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-800 text-sm">{ex.name}</div>
+                      <div className="text-xs text-slate-400">Target: {ex.target}</div>
+                      <div className="text-xs text-slate-500 mt-1">{ex.note}</div>
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-400">Reps</label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        value={entry.r}
-                        onChange={(e) => updateEntry('r', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isFilled(entry) ? (
+                        <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
+                          {entry.w || '-'}kg × {entry.r || '-'}
+                        </span>
+                      ) : null}
+                      {isOpen ? (
+                        <ChevronUp size={18} className="text-slate-400" />
+                      ) : (
+                        <ChevronDown size={18} className="text-slate-400" />
+                      )}
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-400">Sets</label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        value={entry.s}
-                        onChange={(e) => updateEntry('s', e.target.value)}
-                        className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                      />
+                  </button>
+                  {isOpen && (
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-xs text-slate-400">Weight (kg)</label>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            value={entry.w}
+                            onChange={(e) => updateEntry(ex.name, 'w', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Reps</label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={entry.r}
+                            onChange={(e) => updateEntry(ex.name, 'r', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Sets</label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={entry.s}
+                            onChange={(e) => updateEntry(ex.name, 's', e.target.value)}
+                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                      {last ? (
+                        <div className="mt-2 text-xs text-slate-400">
+                          Last ({prettyDate(last.date)}): {formatSet(last)}
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
           <button
             onClick={saveLogs}
@@ -254,6 +336,27 @@ export default function WorkoutTracker() {
               'Save Today’s Session'
             )}
           </button>
+
+          <div className="mt-6">
+            <h2 className="text-sm font-semibold text-slate-500 mb-2">
+              History — {tab} {variant}
+            </h2>
+            <div className="space-y-2">
+              {history.length === 0 && (
+                <div className="text-sm text-slate-400">No entries yet.</div>
+              )}
+              {history.map((h) => (
+                <div key={h.date} className="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                  <div className="text-sm font-semibold text-slate-800">{prettyDate(h.date)}</div>
+                  {h.entries.map((e) => (
+                    <div key={e.name} className="text-xs text-slate-500 mt-1">
+                      {e.name}: {formatSet(e)}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : (
         <div className="px-4 mt-4">
@@ -300,7 +403,7 @@ export default function WorkoutTracker() {
                   key={e.date}
                   className="bg-white border border-slate-200 rounded-lg px-3 py-2 flex justify-between items-center gap-2"
                 >
-                  <span className="text-sm text-slate-600">{e.date}</span>
+                  <span className="text-sm text-slate-600">{prettyDate(e.date)}</span>
                   {e.notes ? (
                     <span className="text-xs text-slate-400 truncate flex-1 text-right">
                       {e.notes}
