@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.9';
+const APP_VERSION = '5.0';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -568,7 +568,7 @@ export default function WorkoutTracker() {
           {date !== today && (
             <button
               onClick={returnToToday}
-              className="text-xs font-semibold text-night bg-fg rounded-lg px-3 py-1.5"
+              className="text-xs font-semibold text-dim bg-surface border border-line rounded-lg px-3 py-1.5"
             >
               Today
             </button>
