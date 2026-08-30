@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.3';
+const APP_VERSION = '4.4';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -765,7 +765,7 @@ export default function WorkoutTracker() {
                           )}
 
                           {sets.map((set, si) => (
-                            <div key={si} className="flex items-center gap-2 mb-1.5">
+                            <div key={si} className="flex items-center gap-2 mb-1">
                               <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
                                 Set {si + 1}
                               </span>
@@ -775,7 +775,7 @@ export default function WorkoutTracker() {
                                 value={set.w}
                                 placeholder="kg"
                                 onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
-                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                                className="min-w-0 flex-1 max-w-[6.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                               />
                               <input
                                 type="number"
@@ -783,12 +783,12 @@ export default function WorkoutTracker() {
                                 value={set.r}
                                 placeholder="reps"
                                 onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
-                                className="min-w-0 flex-1 bg-raised border border-line rounded-lg px-2 py-2 text-[17px] font-bold text-center nums focus:border-mint focus:outline-none"
+                                className="min-w-0 flex-1 max-w-[6.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                               />
                               <button
                                 onClick={() => removeSet(ex.name, si)}
                                 aria-label={`Remove set ${si + 1}`}
-                                className="w-8 h-8 shrink-0 rounded-lg text-dim flex items-center justify-center"
+                                className="w-7 h-7 shrink-0 rounded-lg text-dim flex items-center justify-center"
                               >
                                 <X size={16} />
                               </button>
@@ -798,7 +798,7 @@ export default function WorkoutTracker() {
                           <div className="flex items-center gap-2 mt-2">
                             <button
                               onClick={() => addSet(ex.name)}
-                              className="flex-1 border border-dashed border-line rounded-lg py-2 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
+                              className="border border-dashed border-line rounded-lg px-3 py-1.5 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
                             >
                               <Plus size={15} /> Add set
                             </button>

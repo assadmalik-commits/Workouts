@@ -76,6 +76,18 @@ input[type='date'] {
   color-scheme: inherit;
 }
 
+/* Spinner arrows eat a third of a narrow field and are useless on a phone,
+   where the numeric keypad is the input. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Digits that line up wherever they're compared. */
 .nums {
   font-variant-numeric: tabular-nums;
