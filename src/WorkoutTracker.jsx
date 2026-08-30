@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.8';
+const APP_VERSION = '4.9';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -216,6 +216,16 @@ export default function WorkoutTracker() {
   // Sessions trained in the current rotation, mapped to the day they were done.
   const today = localDateStr(now);
   const weekStart = weekStartStr(now);
+  // Which cell in the strip the selected date falls on, or -1 when looking at
+  // a date outside this week.
+  const weekEnd = (() => {
+    const d = new Date(`${weekStart}T00:00:00`);
+    d.setDate(d.getDate() + 6);
+    return localDateStr(d);
+  })();
+  const selectedDow =
+    date >= weekStart && date <= weekEnd ? new Date(`${date}T00:00:00`).getDay() : -1;
+
   const todayPlan = scheduledFor(now);
   const isRestDay = now.getDay() === REST_DOW;
 
@@ -482,6 +492,7 @@ export default function WorkoutTracker() {
           {DOW.map((label, dow) => {
             const planned = SCHEDULE.find((x) => x.dow === dow);
             const isToday = now.getDay() === dow;
+            const isSelected = restView ? !planned : selectedDow === dow && !restView;
             const done = planned && cycle[planned.slot];
             const accent = planned ? accentOf(planned.variant) : null;
             return (
@@ -508,14 +519,16 @@ export default function WorkoutTracker() {
                   }
                 }}
                 className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
-                  (!planned && restView) || (isToday && !restView)
-                    ? 'border-fg/40 bg-surface'
-                    : 'border-transparent'
+                  isSelected
+                    ? 'border-fg bg-fg'
+                    : isToday
+                      ? 'border-fg/40 bg-surface'
+                      : 'border-transparent'
                 }`}
               >
                 <span
                   className={`text-xs font-bold uppercase tracking-wide ${
-                    isToday ? 'text-fg' : 'text-dim'
+                    isSelected ? 'text-night' : isToday ? 'text-fg' : 'text-dim'
                   }`}
                 >
                   {planned ? label[0] : 'Rest'}
