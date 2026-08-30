@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { storage } from './storage';
+import { storage, storageIsDurable } from './storage';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -90,6 +90,7 @@ export default function WorkoutTracker() {
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
   const [bwNotes, setBwNotes] = useState('');
+  const [durable, setDurable] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -98,6 +99,7 @@ export default function WorkoutTracker() {
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
+      setDurable(storageIsDurable());
       setReady(true);
       if (changed) save('workout-logs', migrated);
     })();
@@ -202,6 +204,14 @@ export default function WorkoutTracker() {
           className="mt-2 bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
         />
       </div>
+
+      {!durable && (
+        <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">
+          <span className="font-semibold">This browser isn’t keeping saved data.</span> Your
+          entries will disappear when you close the page. In Safari, turn off Settings →
+          Apps → Safari → Prevent Cross-Site Tracking, or open this page in another browser.
+        </div>
+      )}
 
       {error && (
         <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
