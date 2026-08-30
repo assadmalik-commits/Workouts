@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
+import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.2';
+const APP_VERSION = '2.3';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -91,17 +92,30 @@ export default function WorkoutTracker() {
   const [bwInput, setBwInput] = useState('');
   const [bwNotes, setBwNotes] = useState('');
   const [durable, setDurable] = useState(true);
+  const publisherRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const stored = await load('workout-logs', {});
-      const b = await load('bodyweight-logs', []);
+      const embedded = readEmbedded();
+      let stored;
+      let b;
+      if (hasEmbeddedData(embedded)) {
+        stored = embedded['workout-logs'] || {};
+        b = embedded['bodyweight-logs'] || [];
+      } else {
+        stored = await load('workout-logs', {});
+        b = await load('bodyweight-logs', []);
+      }
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
-      setDurable(storageIsDurable());
       setReady(true);
       if (changed) save('workout-logs', migrated);
+
+      // The capability resolves after the first render, or not at all.
+      const publish = await getPublisher();
+      publisherRef.current = publish;
+      setDurable(Boolean(publish) || storageIsDurable());
     })();
   }, [load, save, setReady]);
 
@@ -154,9 +168,17 @@ export default function WorkoutTracker() {
     return null;
   };
 
+  const publishAll = async (nextLogs, nextBw) => {
+    const publish = publisherRef.current;
+    if (!publish) return true;
+    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
+    return res.ok;
+  };
+
   const saveLogs = async () => {
     const ok = await save('workout-logs', logs);
-    if (ok) {
+    const published = await publishAll(logs, bwLogs);
+    if (ok || published) {
       setSavedFlash('workout');
       setTimeout(() => setSavedFlash(null), 1500);
     }
@@ -169,7 +191,8 @@ export default function WorkoutTracker() {
       a.date < b.date ? 1 : -1
     );
     const ok = await save('bodyweight-logs', next);
-    if (ok) {
+    const published = await publishAll(logs, next);
+    if (ok || published) {
       setBwLogs(next);
       setSavedFlash('bw');
       setTimeout(() => setSavedFlash(null), 1500);
