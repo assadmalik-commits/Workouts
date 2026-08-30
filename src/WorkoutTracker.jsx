@@ -5,7 +5,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.7';
+const APP_VERSION = '3.0';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -301,20 +301,81 @@ export default function WorkoutTracker() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-slate-400" size={28} />
+      <div className="min-h-screen flex items-center justify-center bg-base">
+        <Loader2 className="animate-spin text-mint" size={28} />
       </div>
     );
   }
 
+  const clock = `${now.toLocaleDateString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+  })} · ${now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+
+  const accentOf = (v) => (v === 'A' ? 'mint' : 'amber');
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-10">
-      <div className="sticky top-0 z-10 bg-slate-900 text-white px-4 pt-4 pb-3 shadow-md">
-        <h1 className="text-lg font-bold flex items-center gap-2">
-          <Dumbbell size={20} /> Training Log
-          <span className="text-xs font-medium text-slate-400 ml-auto">v{APP_VERSION}</span>
-        </h1>
-        <div className="mt-2 flex items-center gap-2">
+    <div className="min-h-screen bg-base text-fg font-sans pb-32">
+      <header className="sticky top-0 z-20 bg-base/95 backdrop-blur-sm border-b border-line px-4 pt-4 pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
+            <Dumbbell size={18} className="text-mint" />
+            Training Log
+          </h1>
+          <span className="text-[11px] text-dim nums">v{APP_VERSION}</span>
+        </div>
+        <div className="mt-0.5 text-xs text-dim">
+          {date === today ? clock : `Viewing ${prettyDate(date)}`}
+        </div>
+
+        {/* The week as a strip: which session belongs to which day, what's done,
+            where today sits. Tapping a day opens that session. */}
+        <div className="mt-3 grid grid-cols-7 gap-1.5">
+          {DOW.map((label, dow) => {
+            const planned = SCHEDULE.find((x) => x.dow === dow);
+            const isToday = now.getDay() === dow;
+            const done = planned && cycle[planned.slot];
+            const accent = planned ? accentOf(planned.variant) : null;
+            return (
+              <button
+                key={label}
+                onClick={() => {
+                  if (!planned) return;
+                  setTab(planned.day);
+                  setVariant(planned.variant);
+                  setOpenEx(null);
+                }}
+                className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
+                  isToday ? 'border-fg/30 bg-surface' : 'border-transparent'
+                }`}
+              >
+                <span
+                  className={`text-[10px] font-semibold uppercase tracking-wide ${
+                    isToday ? 'text-fg' : 'text-dim'
+                  }`}
+                >
+                  {label[0]}
+                </span>
+                <span
+                  className={`h-1.5 w-full rounded-full ${
+                    !planned
+                      ? 'bg-line'
+                      : done
+                        ? accent === 'mint'
+                          ? 'bg-mint'
+                          : 'bg-amber'
+                        : accent === 'mint'
+                          ? 'bg-mint-dim'
+                          : 'bg-amber-dim'
+                  }`}
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-2.5 flex items-center gap-2">
           <input
             type="date"
             value={date}
@@ -323,7 +384,7 @@ export default function WorkoutTracker() {
               setDate(picked);
               setPinned(picked !== today);
             }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-700"
+            className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
           />
           {date !== today && (
             <button
@@ -331,41 +392,32 @@ export default function WorkoutTracker() {
                 setDate(today);
                 setPinned(false);
               }}
-              className="text-xs font-semibold bg-slate-700 text-slate-100 rounded-lg px-3 py-1.5"
+              className="text-xs font-semibold text-base bg-fg rounded-lg px-3 py-1.5"
             >
               Today
             </button>
           )}
+          <span className="ml-auto text-xs text-dim nums">
+            {doneCount}/{ROTATION.length} this week
+          </span>
         </div>
-        <div className="mt-1.5 text-xs text-slate-400">
-          {date === today
-            ? `Today · ${now.toLocaleDateString(undefined, {
-                weekday: 'short',
-                day: '2-digit',
-                month: 'short',
-              })} · ${now.toLocaleTimeString(undefined, {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}`
-            : `Viewing ${prettyDate(date)}`}
-        </div>
-      </div>
+      </header>
 
       {!durable && (
-        <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">
+        <div className="mx-4 mt-3 bg-danger-dim border border-danger/40 text-danger text-sm rounded-xl px-3 py-2.5">
           <span className="font-semibold">This browser isn’t keeping saved data.</span> Your
-          entries will disappear when you close the page. In Safari, turn off Settings →
-          Apps → Safari → Prevent Cross-Site Tracking, or open this page in another browser.
+          entries will disappear when you close the page. In Safari, turn off Settings → Apps
+          → Safari → Prevent Cross-Site Tracking, or open this page in another browser.
         </div>
       )}
 
       {error && (
-        <div className="mx-4 mt-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+        <div className="mx-4 mt-3 bg-danger-dim border border-danger/40 text-danger text-sm rounded-xl px-3 py-2.5">
           {error}
         </div>
       )}
 
-      <div className="flex px-4 mt-4 gap-2">
+      <div className="flex px-4 mt-4 gap-1.5">
         {[...DAYS, 'Bodyweight'].map((d) => (
           <button
             key={d}
@@ -374,13 +426,9 @@ export default function WorkoutTracker() {
               if (d !== 'Bodyweight') setVariant(pickVariant(d));
               setOpenEx(null);
             }}
-            className={`py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${
+            className={`py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition ${
               d === 'Bodyweight' ? 'shrink-0 px-3' : 'flex-1'
-            } ${
-              tab === d
-                ? 'bg-slate-900 text-white'
-                : 'bg-white text-slate-500 border border-slate-200'
-            }`}
+            } ${tab === d ? 'bg-fg text-base' : 'bg-surface text-dim border border-line'}`}
           >
             {d === 'Bodyweight' ? <Scale size={14} className="inline mr-1 -mt-0.5" /> : null}
             {d}
@@ -394,6 +442,8 @@ export default function WorkoutTracker() {
             {VARIANTS.map((v) => {
               const spent = Boolean(lockedOn(tab, v));
               const onToday = cycle[slotKey(tab, v)] === date;
+              const on = variant === v;
+              const accent = accentOf(v);
               return (
                 <button
                   key={v}
@@ -401,34 +451,33 @@ export default function WorkoutTracker() {
                     setVariant(v);
                     setOpenEx(null);
                   }}
-                  className={`px-5 py-1.5 rounded-full text-sm font-bold border transition ${
-                    variant === v
-                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                      : spent
-                        ? 'bg-slate-100 text-slate-400 border-slate-200'
-                        : 'bg-white text-slate-500 border-slate-200'
+                  className={`px-4 py-2 rounded-xl text-sm font-bold border transition flex items-center gap-1.5 ${
+                    on
+                      ? accent === 'mint'
+                        ? 'bg-mint-dim text-mint border-mint/40'
+                        : 'bg-amber-dim text-amber border-amber/40'
+                      : 'bg-surface text-dim border-line'
                   }`}
                 >
                   Day {v}
-                  {spent || onToday ? ' ✓' : ''}
+                  {spent || onToday ? <Check size={14} /> : null}
                 </button>
               );
             })}
+            <span className="ml-auto text-xs text-dim text-right">
+              {weekComplete
+                ? 'Reopens Sunday'
+                : nextUp
+                  ? `Next: ${nextUp.label}${
+                      todayPlan && nextUp.slot === todayPlan.slot ? ' · today' : ''
+                    }`
+                  : ''}
+            </span>
           </div>
 
-          <div className="mt-2 text-xs text-slate-500">
-            {doneCount} of {ROTATION.length} done this week
-            {weekComplete
-              ? ' · rotation reopens Sunday'
-              : nextUp
-                ? ` · Next: ${nextUp.label}${
-                    todayPlan && nextUp.slot === todayPlan.slot ? ' (today)' : ''
-                  }`
-                : ''}
-          </div>
           {isRestDay && (
-            <div className="mt-2 bg-slate-100 rounded-lg px-3 py-2 text-xs text-slate-600">
-              Saturday is a rest day.{' '}
+            <div className="mt-3 bg-surface border border-line rounded-xl px-3 py-2.5 text-xs text-dim">
+              <span className="font-semibold text-fg">Saturday is a rest day.</span>{' '}
               {weekComplete
                 ? 'The whole week is logged.'
                 : 'Anything still outstanding can be caught up today.'}
@@ -436,12 +485,21 @@ export default function WorkoutTracker() {
           )}
 
           {locked ? (
-            <div className="mt-3 bg-white border border-slate-200 rounded-xl px-4 py-5 text-center">
-              <div className="text-sm font-semibold text-slate-800">
-                {tab} {variant} is done this week
+            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
+              <div
+                className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
+                  accentOf(variant) === 'mint'
+                    ? 'bg-mint-dim text-mint'
+                    : 'bg-amber-dim text-amber'
+                }`}
+              >
+                <Check size={22} />
               </div>
-              <div className="text-xs text-slate-500 mt-1">
-                Trained {prettyDate(locked)}. It comes round again on Sunday.
+              <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
+                {tab} {variant} done
+              </div>
+              <div className="text-sm text-dim mt-1">
+                Trained {prettyDate(locked)}. Comes round again on Sunday.
               </div>
               {nextUp && (
                 <button
@@ -450,136 +508,134 @@ export default function WorkoutTracker() {
                     setVariant(nextUp.variant);
                     setOpenEx(null);
                   }}
-                  className="mt-4 bg-slate-900 text-white rounded-xl px-4 py-2.5 text-sm font-semibold"
+                  className="mt-5 bg-mint text-base rounded-xl px-5 py-3 text-sm font-bold"
                 >
                   Go to {nextUp.label}
                 </button>
               )}
               <button
                 onClick={() => setOverrides((o) => ({ ...o, [slot]: true }))}
-                className="block mx-auto mt-3 text-xs text-slate-400 underline"
+                className="block mx-auto mt-4 text-xs text-dim underline"
               >
                 Train it again anyway
               </button>
             </div>
           ) : (
-          <>
-          <div className="mt-3 bg-slate-100 border-l-4 border-slate-900 rounded-r-lg px-3 py-2 text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">
-              {tab} {variant} focus:
-            </span>{' '}
-            {session.focus}
-            <span className="block mt-1 text-slate-400">
-              Scheduled for {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
-            </span>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {session.exercises.map((ex) => {
-              const entry = getEntry(ex.name);
-              const isOpen = openEx === ex.name;
-              const last = lastFor(ex.name);
-              return (
-                <div
-                  key={ex.name}
-                  className="bg-white rounded-xl border border-slate-200 overflow-hidden"
-                >
-                  <button
-                    onClick={() => setOpenEx(isOpen ? null : ex.name)}
-                    className="w-full flex items-start justify-between px-4 py-3 text-left gap-2"
+            <>
+              <div
+                className={`mt-4 rounded-2xl px-4 py-3 border ${
+                  accentOf(variant) === 'mint'
+                    ? 'bg-mint-dim/50 border-mint/25'
+                    : 'bg-amber-dim/50 border-amber/25'
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-display text-xl font-bold uppercase tracking-wide">
+                    {tab} {variant}
+                  </span>
+                  <span
+                    className={`text-[10px] font-semibold uppercase tracking-widest ${
+                      accentOf(variant) === 'mint' ? 'text-mint' : 'text-amber'
+                    }`}
                   >
-                    <div className="min-w-0">
-                      <div className="font-semibold text-slate-800 text-sm">{ex.name}</div>
-                      <div className="text-xs text-slate-400">Target: {ex.target}</div>
-                      <div className="text-xs text-slate-500 mt-1">{ex.note}</div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isFilled(entry) ? (
-                        <span className="text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-medium">
-                          {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
+                    {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
+                  </span>
+                </div>
+                <div className="text-xs text-dim mt-1 leading-relaxed">{session.focus}</div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {session.exercises.map((ex, i) => {
+                  const entry = getEntry(ex.name);
+                  const isOpen = openEx === ex.name;
+                  const last = lastFor(ex.name);
+                  const filled = isFilled(entry);
+                  return (
+                    <div
+                      key={ex.name}
+                      className={`bg-surface rounded-2xl border overflow-hidden transition ${
+                        filled ? 'border-mint/30' : 'border-line'
+                      }`}
+                    >
+                      <button
+                        onClick={() => setOpenEx(isOpen ? null : ex.name)}
+                        className="w-full flex items-start gap-3 px-4 py-3.5 text-left"
+                      >
+                        <span
+                          className={`mt-0.5 w-6 h-6 shrink-0 rounded-lg text-[11px] font-bold flex items-center justify-center nums ${
+                            filled ? 'bg-mint text-base' : 'bg-raised text-dim'
+                          }`}
+                        >
+                          {filled ? <Check size={13} /> : i + 1}
                         </span>
-                      ) : null}
-                      {isOpen ? (
-                        <ChevronUp size={18} className="text-slate-400" />
-                      ) : (
-                        <ChevronDown size={18} className="text-slate-400" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-[15px] leading-tight">{ex.name}</div>
+                          <div className="text-xs text-dim mt-0.5 nums">{ex.target}</div>
+                          {filled ? (
+                            <div className="font-display text-xl font-bold text-mint mt-1.5 nums">
+                              {formatWeight(entry.w)} × {entry.r || '-'} × {entry.s || '-'}
+                            </div>
+                          ) : last ? (
+                            <div className="text-xs text-dim mt-1.5 nums">
+                              Last: {formatSet(last)}
+                            </div>
+                          ) : null}
+                        </div>
+                        {isOpen ? (
+                          <ChevronUp size={18} className="text-dim shrink-0" />
+                        ) : (
+                          <ChevronDown size={18} className="text-dim shrink-0" />
+                        )}
+                      </button>
+                      {isOpen && (
+                        <div className="px-4 pb-4">
+                          <div className="text-xs text-dim mb-3 leading-relaxed">{ex.note}</div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {[
+                              { k: 'w', label: 'Weight', hint: 'kg', mode: 'decimal' },
+                              { k: 'r', label: 'Reps', hint: '', mode: 'numeric' },
+                              { k: 's', label: 'Sets', hint: '', mode: 'numeric' },
+                            ].map((f) => (
+                              <div key={f.k}>
+                                <label className="text-[10px] uppercase tracking-widest text-dim font-semibold">
+                                  {f.label}
+                                  {f.hint ? ` (${f.hint})` : ''}
+                                </label>
+                                <input
+                                  type="number"
+                                  inputMode={f.mode}
+                                  value={entry[f.k]}
+                                  onChange={(e) => updateEntry(ex.name, f.k, e.target.value)}
+                                  className="w-full mt-1 bg-raised border border-line rounded-xl px-3 py-3 text-lg font-semibold text-center nums focus:border-mint focus:outline-none"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          {last && (
+                            <div className="mt-2.5 text-xs text-dim nums">
+                              Last ({prettyDate(last.date)}): {formatSet(last)}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
-                  </button>
-                  {isOpen && (
-                    <div className="px-4 pb-4">
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-xs text-slate-400">Weight (kg)</label>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            value={entry.w}
-                            onChange={(e) => updateEntry(ex.name, 'w', e.target.value)}
-                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-400">Reps</label>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            value={entry.r}
-                            onChange={(e) => updateEntry(ex.name, 'r', e.target.value)}
-                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-400">Sets</label>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            value={entry.s}
-                            onChange={(e) => updateEntry(ex.name, 's', e.target.value)}
-                            className="w-full mt-1 border border-slate-200 rounded-lg px-2 py-2 text-sm"
-                          />
-                        </div>
-                      </div>
-                      {last ? (
-                        <div className="mt-2 text-xs text-slate-400">
-                          Last ({prettyDate(last.date)}): {formatSet(last)}
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={saveLogs}
-            className="w-full mt-4 bg-slate-900 text-white rounded-xl py-3 font-semibold flex items-center justify-center gap-2"
-          >
-            {savedFlash === 'workout' ? (
-              <>
-                <Check size={18} /> Saved
-              </>
-            ) : (
-              'Save Today’s Session'
-            )}
-          </button>
-          </>
+                  );
+                })}
+              </div>
+            </>
           )}
 
-          <div className="mt-6">
-            <h2 className="text-sm font-semibold text-slate-500 mb-2">
-              History — {tab} {variant}
+          <div className="mt-8">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
+              {tab} {variant} history
             </h2>
             <div className="space-y-2">
-              {history.length === 0 && (
-                <div className="text-sm text-slate-400">No entries yet.</div>
-              )}
+              {history.length === 0 && <div className="text-sm text-dim">No entries yet.</div>}
               {history.map((h) => (
-                <div key={h.date} className="bg-white border border-slate-200 rounded-lg px-3 py-2">
-                  <div className="text-sm font-semibold text-slate-800">{prettyDate(h.date)}</div>
+                <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
+                  <div className="text-sm font-semibold">{prettyDate(h.date)}</div>
                   {h.entries.map((e) => (
-                    <div key={e.name} className="text-xs text-slate-500 mt-1">
+                    <div key={e.name} className="text-xs text-dim mt-1 nums">
                       {e.name}: {formatSet(e)}
                     </div>
                   ))}
@@ -590,27 +646,39 @@ export default function WorkoutTracker() {
         </div>
       ) : (
         <div className="px-4 mt-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
-            <label className="text-xs text-slate-400">Body weight (kg)</label>
+          <div className="bg-surface rounded-2xl border border-line p-5">
+            {bwLogs[0] && (
+              <div className="text-center pb-5 mb-5 border-b border-line">
+                <div className="font-display text-5xl font-bold nums">{bwLogs[0].weight}</div>
+                <div className="text-xs text-dim uppercase tracking-widest mt-1">
+                  kg · {prettyDate(bwLogs[0].date)}
+                </div>
+              </div>
+            )}
+            <label className="text-[10px] uppercase tracking-widest text-dim font-semibold">
+              Body weight (kg)
+            </label>
             <input
               type="number"
               inputMode="decimal"
               value={bwInput}
               onChange={(e) => setBwInput(e.target.value)}
-              className="w-full mt-1 border border-slate-200 rounded-lg px-3 py-2 text-sm"
-              placeholder="e.g. 69"
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-lg font-semibold nums focus:border-mint focus:outline-none"
+              placeholder="69"
             />
-            <label className="text-xs text-slate-400 mt-3 block">Notes</label>
+            <label className="text-[10px] uppercase tracking-widest text-dim font-semibold mt-4 block">
+              Notes
+            </label>
             <input
               type="text"
               value={bwNotes}
               onChange={(e) => setBwNotes(e.target.value)}
-              className="w-full mt-1 border border-slate-200 rounded-lg px-3 py-2 text-sm"
-              placeholder="e.g. fasted, morning"
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-sm focus:border-mint focus:outline-none"
+              placeholder="fasted, morning"
             />
             <button
               onClick={saveBodyweight}
-              className="w-full mt-4 bg-slate-900 text-white rounded-xl py-3 font-semibold flex items-center justify-center gap-2"
+              className="w-full mt-5 bg-mint text-base rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
             >
               {savedFlash === 'bw' ? (
                 <>
@@ -622,30 +690,47 @@ export default function WorkoutTracker() {
             </button>
           </div>
 
-          <div className="mt-4">
-            <h2 className="text-sm font-semibold text-slate-500 mb-2">History</h2>
+          <div className="mt-6">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
+              History
+            </h2>
             <div className="space-y-2">
-              {bwLogs.length === 0 && (
-                <div className="text-sm text-slate-400">No entries yet.</div>
-              )}
+              {bwLogs.length === 0 && <div className="text-sm text-dim">No entries yet.</div>}
               {bwLogs.map((e) => (
                 <div
                   key={e.date}
-                  className="bg-white border border-slate-200 rounded-lg px-3 py-2 flex justify-between items-center gap-2"
+                  className="bg-surface border border-line rounded-xl px-4 py-3 flex justify-between items-center gap-2"
                 >
-                  <span className="text-sm text-slate-600">{prettyDate(e.date)}</span>
+                  <span className="text-sm text-dim">{prettyDate(e.date)}</span>
                   {e.notes ? (
-                    <span className="text-xs text-slate-400 truncate flex-1 text-right">
-                      {e.notes}
-                    </span>
+                    <span className="text-xs text-dim truncate flex-1 text-right">{e.notes}</span>
                   ) : null}
-                  <span className="text-sm font-semibold text-slate-800 shrink-0">
-                    {e.weight} kg
+                  <span className="font-display text-xl font-bold shrink-0 nums">
+                    {e.weight}
+                    <span className="text-xs text-dim font-sans font-medium ml-1">kg</span>
                   </span>
                 </div>
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Thumb-reachable: the one action taken mid-set. */}
+      {!isBodyweight && !locked && (
+        <div className="fixed bottom-0 left-0 right-0 z-20 bg-base/95 backdrop-blur-sm border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            onClick={saveLogs}
+            className="w-full bg-mint text-base rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
+          >
+            {savedFlash === 'workout' ? (
+              <>
+                <Check size={18} /> Saved
+              </>
+            ) : (
+              `Save ${tab} ${variant}`
+            )}
+          </button>
         </div>
       )}
     </div>
