@@ -6,11 +6,11 @@
    rather than decorating it. */
 @theme {
   --color-night: #0b0e14;
-  --color-surface: #151a23;
-  --color-raised: #1e2634;
-  --color-line: #333d50;
+  --color-surface: #171d28;
+  --color-raised: #222b3a;
+  --color-line: #3d4859;
   --color-fg: #ffffff;
-  --color-dim: #aab5c7;
+  --color-dim: #c5cddb;
   --color-mint: #3ddc97;
   --color-mint-dim: #14352a;
   --color-amber: #ffb13c;

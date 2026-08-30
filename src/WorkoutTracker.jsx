@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '3.1';
+const APP_VERSION = '3.2';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -116,6 +116,8 @@ export default function WorkoutTracker() {
   const [now, setNow] = useState(() => new Date());
   // Sessions the lifter chose to repeat anyway, for this visit only.
   const [overrides, setOverrides] = useState({});
+  // Saturday is a destination of its own rather than a blank in the strip.
+  const [restView, setRestView] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
@@ -192,11 +194,15 @@ export default function WorkoutTracker() {
   useEffect(() => {
     if (!ready || openedRef.current) return;
     openedRef.current = true;
+    if (isRestDay) {
+      setRestView(true);
+      return;
+    }
     if (nextUp) {
       setTab(nextUp.day);
       setVariant(nextUp.variant);
     }
-  }, [ready, nextUp]);
+  }, [ready, nextUp, isRestDay]);
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
@@ -341,13 +347,19 @@ export default function WorkoutTracker() {
               <button
                 key={label}
                 onClick={() => {
-                  if (!planned) return;
+                  setOpenEx(null);
+                  if (!planned) {
+                    setRestView(true);
+                    return;
+                  }
+                  setRestView(false);
                   setTab(planned.day);
                   setVariant(planned.variant);
-                  setOpenEx(null);
                 }}
                 className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
-                  isToday ? 'border-fg/30 bg-surface' : 'border-transparent'
+                  (!planned && restView) || (isToday && !restView)
+                    ? 'border-fg/40 bg-surface'
+                    : 'border-transparent'
                 }`}
               >
                 <span
@@ -422,6 +434,7 @@ export default function WorkoutTracker() {
           <button
             key={d}
             onClick={() => {
+              setRestView(false);
               setTab(d);
               if (d !== 'Bodyweight') setVariant(pickVariant(d));
               setOpenEx(null);
@@ -436,7 +449,74 @@ export default function WorkoutTracker() {
         ))}
       </div>
 
-      {!isBodyweight ? (
+      {restView && !isBodyweight ? (
+        <div className="px-4 mt-4">
+          <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
+              <Moon size={24} />
+            </div>
+            <div className="font-display text-3xl font-bold uppercase tracking-wide mt-4">
+              Rest day
+            </div>
+            <div className="text-[15px] text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
+              Rest it out today, you’ll get stronger tomorrow.
+            </div>
+            <div className="mt-6 pt-5 border-t border-line text-[13px] text-dim nums">
+              {doneCount} of {ROTATION.length} sessions done this week
+            </div>
+            {weekComplete ? (
+              <div className="text-[13px] text-dim mt-1">The rotation reopens Sunday.</div>
+            ) : nextUp ? (
+              <button
+                onClick={() => {
+                  setRestView(false);
+                  setTab(nextUp.day);
+                  setVariant(nextUp.variant);
+                  setOpenEx(null);
+                }}
+                className="mt-4 bg-raised text-fg border border-line rounded-xl px-4 py-2.5 text-sm font-semibold"
+              >
+                Catch up: {nextUp.label}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="mt-6">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
+              This week
+            </h2>
+            <div className="space-y-2">
+              {ROTATION.map((r) => {
+                const on = cycle[r.slot];
+                return (
+                  <div
+                    key={r.slot}
+                    className="bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center ${
+                          on
+                            ? r.variant === 'A'
+                              ? 'bg-mint text-night'
+                              : 'bg-amber text-night'
+                            : 'bg-raised text-dim'
+                        }`}
+                      >
+                        {on ? <Check size={13} /> : null}
+                      </span>
+                      <span className="font-semibold text-[15px] truncate">{r.label}</span>
+                    </div>
+                    <span className="text-[13px] text-dim shrink-0 nums">
+                      {on ? prettyDate(on) : DOW[r.dow]}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : !isBodyweight ? (
         <div className="px-4 mt-4">
           <div className="flex gap-2 items-center">
             {VARIANTS.map((v) => {
@@ -474,15 +554,6 @@ export default function WorkoutTracker() {
                   : ''}
             </span>
           </div>
-
-          {isRestDay && (
-            <div className="mt-3 bg-surface border border-line rounded-xl px-3 py-2.5 text-xs text-dim">
-              <span className="font-semibold text-fg">Rest day — rest it out.</span>{' '}
-              {weekComplete
-                ? 'The whole week is logged.'
-                : 'Anything still outstanding can be caught up today.'}
-            </div>
-          )}
 
           {locked ? (
             <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
@@ -717,7 +788,7 @@ export default function WorkoutTracker() {
       )}
 
       {/* Thumb-reachable: the one action taken mid-set. */}
-      {!isBodyweight && !locked && (
+      {!isBodyweight && !locked && !restView && (
         <div className="fixed bottom-0 left-0 right-0 z-20 bg-night/95 backdrop-blur-sm border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={saveLogs}
