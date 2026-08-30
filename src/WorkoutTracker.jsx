@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.5';
+const APP_VERSION = '4.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -59,18 +59,25 @@ const formatWeight = (w) => {
 const volumeOf = (entry) =>
   setsOf(entry).reduce((sum, set) => sum + (Number(set.w) || 0) * (Number(set.r) || 0), 0);
 
-// One grammar, always: every set listed as weight×reps, the unit always on the
-// weight, sets separated by a dot. Uniform sets repeat rather than collapsing
-// into a count — special cases for "these happen to match" produced three
-// different notations in the same list, and a reader had to work out which
-// one they were looking at before they could read the numbers.
-const summarise = (entry) =>
+// Wherever there is room to list the sets, they are listed the one way: every
+// set spelled out, both units named, separated by commas.
+const listSets = (entry) =>
   setsOf(entry)
     .filter(setFilled)
-    .map((set) => `${formatWeight(set.w)}×${set.r || '-'}`)
-    .join(' · ');
+    .map((set) => `${formatWeight(set.w)} × ${set.r || '-'} reps`)
+    .join(', ');
 
-const formatSet = (entry) => summarise(entry) || '-';
+// The collapsed row cannot hold that for four sets without growing the page,
+// so it carries a summary instead — a count and the load moved. That is a
+// different fact about the session, not a second notation for the same one.
+const summarise = (entry) => {
+  const count = setsOf(entry).filter(setFilled).length;
+  if (!count) return '';
+  const total = volumeOf(entry);
+  return `${count} ${count === 1 ? 'set' : 'sets'}${total ? ` · ${total} kg` : ''}`;
+};
+
+const formatSet = (entry) => listSets(entry) || '-';
 
 // "4x6-8" is shorthand a lifter has to decode. Say it: "4 sets of 6-8 reps",
 // keeping whatever the program appended — "+ drop set", "/leg".
@@ -764,16 +771,14 @@ export default function WorkoutTracker() {
                           {/* The row above already shows the target until something
                               is logged, at which point it shows the sets instead —
                               so the target only needs repeating once it is gone. */}
-                          {(filled || last) && (
-                            <div className="flex items-baseline justify-between gap-2 mb-2">
-                              <span className="text-[13px] text-dim nums font-semibold">
-                                {filled ? `Target ${formatTarget(ex.target)}` : ''}
-                              </span>
-                              {last && (
-                                <span className="text-[13px] text-dim nums font-semibold truncate">
-                                  Last {formatSet(last)}
-                                </span>
-                              )}
+                          {filled && (
+                            <div className="text-[13px] text-dim nums font-semibold mb-2">
+                              Target {formatTarget(ex.target)}
+                            </div>
+                          )}
+                          {last && (
+                            <div className="text-[13px] text-dim nums font-semibold mb-2 leading-snug">
+                              Last: {formatSet(last)}
                             </div>
                           )}
 
