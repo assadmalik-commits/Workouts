@@ -5,7 +5,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '2.5';
+const APP_VERSION = '2.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -15,6 +15,13 @@ const localDateStr = (d = new Date()) => {
 };
 
 const slotKey = (day, variant) => `${day}-${variant}`;
+
+// The week's six sessions in program order. Order can flex in practice — Pull
+// and Legs swap happily — but each one is trained once before any comes round
+// again.
+const ROTATION = VARIANTS.flatMap((variant) =>
+  DAYS.map((day) => ({ day, variant, slot: slotKey(day, variant), label: `${day} ${variant}` }))
+);
 
 const isFilled = (entry) => Boolean(entry && (entry.w || entry.r || entry.s));
 
@@ -94,12 +101,18 @@ export default function WorkoutTracker() {
   // The date follows the clock until a past session is picked deliberately.
   const [pinned, setPinned] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  // The day the current rotation opened; sessions logged on or after it count
+  // towards this week.
+  const [cycleStart, setCycleStart] = useState(null);
+  // Sessions the lifter chose to repeat anyway, for this visit only.
+  const [overrides, setOverrides] = useState({});
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
   const [bwInput, setBwInput] = useState('');
   const [bwNotes, setBwNotes] = useState('');
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
+  const openedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -116,6 +129,18 @@ export default function WorkoutTracker() {
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
+
+      let start = hasEmbeddedData(embedded)
+        ? embedded['cycle-start']
+        : await load('cycle-start', null);
+      if (!start) {
+        // Existing logs belong to the rotation in progress, so open it at the
+        // earliest session on record rather than stranding them.
+        const dates = Object.keys(migrated).sort();
+        start = dates[0] || localDateStr();
+        save('cycle-start', start);
+      }
+      setCycleStart(start);
       setReady(true);
       if (changed) save('workout-logs', migrated);
 
@@ -126,8 +151,59 @@ export default function WorkoutTracker() {
     })();
   }, [load, save, setReady]);
 
+  // Sessions trained in the current rotation, mapped to the day they were done.
+  const cycle = useMemo(() => {
+    const done = {};
+    if (!cycleStart) return done;
+    for (const [d, slots] of Object.entries(logs)) {
+      if (d < cycleStart) continue;
+      for (const [slot, entries] of Object.entries(slots)) {
+        if (!Object.values(entries).some(isFilled)) continue;
+        if (!done[slot] || d < done[slot]) done[slot] = d;
+      }
+    }
+    return done;
+  }, [logs, cycleStart]);
+
+  const doneCount = Object.keys(cycle).length;
+  const weekComplete = doneCount >= ROTATION.length;
+  const nextUp = ROTATION.find((r) => !cycle[r.slot]) || null;
+
+  // A session is spent once it has been trained on some other day this
+  // rotation. The day it was actually trained stays open, so a session can be
+  // finished or corrected.
+  const lockedOn = (day, variant) => {
+    const slot = slotKey(day, variant);
+    const doneOn = cycle[slot];
+    if (!doneOn || doneOn === date || overrides[slot]) return null;
+    return doneOn;
+  };
+
+  // Land on a session that's still available for the day being opened.
+  const pickVariant = (day) =>
+    VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
+
+  const startNextWeek = async () => {
+    const start = localDateStr(now);
+    setCycleStart(start);
+    setOverrides({});
+    await save('cycle-start', start);
+    await publishAll(logs, bwLogs, start);
+  };
+
+  // Open on the session that's actually due rather than on a spent one.
+  useEffect(() => {
+    if (!ready || openedRef.current || !cycleStart) return;
+    openedRef.current = true;
+    if (nextUp) {
+      setTab(nextUp.day);
+      setVariant(nextUp.variant);
+    }
+  }, [ready, cycleStart, nextUp]);
+
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
+  const locked = isBodyweight ? null : lockedOn(tab, variant);
   const session = isBodyweight ? null : PROGRAM[tab][variant];
 
   const getEntry = (exName) =>
@@ -169,10 +245,14 @@ export default function WorkoutTracker() {
     return null;
   };
 
-  const publishAll = async (nextLogs, nextBw) => {
+  const publishAll = async (nextLogs, nextBw, nextStart = cycleStart) => {
     const publish = publisherRef.current;
     if (!publish) return true;
-    const res = await publish({ 'workout-logs': nextLogs, 'bodyweight-logs': nextBw });
+    const res = await publish({
+      'workout-logs': nextLogs,
+      'bodyweight-logs': nextBw,
+      'cycle-start': nextStart,
+    });
     return res.ok;
   };
 
@@ -298,7 +378,7 @@ export default function WorkoutTracker() {
             key={d}
             onClick={() => {
               setTab(d);
-              setVariant('A');
+              if (d !== 'Bodyweight') setVariant(pickVariant(d));
               setOpenEx(null);
             }}
             className={`py-2 rounded-full text-sm font-semibold whitespace-nowrap transition ${
@@ -317,11 +397,10 @@ export default function WorkoutTracker() {
 
       {!isBodyweight ? (
         <div className="px-4 mt-4">
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             {VARIANTS.map((v) => {
-              const done = Object.keys(logs[date]?.[slotKey(tab, v)] || {}).some((name) =>
-                isFilled(logs[date][slotKey(tab, v)][name])
-              );
+              const spent = Boolean(lockedOn(tab, v));
+              const onToday = cycle[slotKey(tab, v)] === date;
               return (
                 <button
                   key={v}
@@ -332,16 +411,65 @@ export default function WorkoutTracker() {
                   className={`px-5 py-1.5 rounded-full text-sm font-bold border transition ${
                     variant === v
                       ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                      : 'bg-white text-slate-500 border-slate-200'
+                      : spent
+                        ? 'bg-slate-100 text-slate-400 border-slate-200'
+                        : 'bg-white text-slate-500 border-slate-200'
                   }`}
                 >
                   Day {v}
-                  {done ? ' •' : ''}
+                  {spent || onToday ? ' ✓' : ''}
                 </button>
               );
             })}
           </div>
 
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-500">
+              {weekComplete
+                ? 'All six sessions done this week'
+                : `${doneCount} of ${ROTATION.length} done this week${
+                    nextUp ? ` · Next: ${nextUp.label}` : ''
+                  }`}
+            </span>
+            {weekComplete && (
+              <button
+                onClick={startNextWeek}
+                className="text-xs font-semibold bg-slate-900 text-white rounded-lg px-3 py-1.5 shrink-0"
+              >
+                Start next week
+              </button>
+            )}
+          </div>
+
+          {locked ? (
+            <div className="mt-3 bg-white border border-slate-200 rounded-xl px-4 py-5 text-center">
+              <div className="text-sm font-semibold text-slate-800">
+                {tab} {variant} is done this week
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                Trained {prettyDate(locked)}. It comes round again next week.
+              </div>
+              {nextUp && (
+                <button
+                  onClick={() => {
+                    setTab(nextUp.day);
+                    setVariant(nextUp.variant);
+                    setOpenEx(null);
+                  }}
+                  className="mt-4 bg-slate-900 text-white rounded-xl px-4 py-2.5 text-sm font-semibold"
+                >
+                  Go to {nextUp.label}
+                </button>
+              )}
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, [slot]: true }))}
+                className="block mx-auto mt-3 text-xs text-slate-400 underline"
+              >
+                Train it again anyway
+              </button>
+            </div>
+          ) : (
+          <>
           <div className="mt-3 bg-slate-100 border-l-4 border-slate-900 rounded-r-lg px-3 py-2 text-xs text-slate-600">
             <span className="font-semibold text-slate-800">
               {tab} {variant} focus:
@@ -439,6 +567,8 @@ export default function WorkoutTracker() {
               'Save Today’s Session'
             )}
           </button>
+          </>
+          )}
 
           <div className="mt-6">
             <h2 className="text-sm font-semibold text-slate-500 mb-2">
