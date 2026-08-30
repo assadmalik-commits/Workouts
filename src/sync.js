@@ -52,7 +52,9 @@ function buildDocument(state) {
     '<head>',
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
-    '<title>Workout Tracker</title>',
+    // The artifact's name is the reader's, not this file's: republishing with a
+    // hardcoded title renamed it back on every save.
+    `<title>${(document.title || 'Workout Tracker').replace(/</g, '\\u003c')}</title>`,
     '<style id="' + CSS_ID + '">' + css.textContent + '</style>',
     '</head>',
     '<body>',

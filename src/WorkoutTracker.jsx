@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.0';
+const APP_VERSION = '4.2';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -59,19 +59,16 @@ const formatWeight = (w) => {
 const volumeOf = (entry) =>
   setsOf(entry).reduce((sum, set) => sum + (Number(set.w) || 0) * (Number(set.r) || 0), 0);
 
-// Compact enough for a collapsed row: uniform sets read as "20kg × 8 × 4", a
-// ramp keeps its shape as "10/12/14/16".
-const summarise = (entry) => {
-  const sets = setsOf(entry).filter(setFilled);
-  if (!sets.length) return '';
-  const weights = sets.map((x) => x.w);
-  const reps = sets.map((x) => x.r);
-  const sameW = weights.every((w) => w === weights[0]);
-  const sameR = reps.every((r) => r === reps[0]);
-  if (sameW && sameR) return `${formatWeight(weights[0])} × ${reps[0] || '-'} × ${sets.length}`;
-  if (sameR) return `${weights.map((w) => (Number(w) === 0 ? 'BW' : w)).join('/')}kg × ${reps[0]}`;
-  return sets.map((x) => `${Number(x.w) === 0 ? 'BW' : x.w}×${x.r || '-'}`).join(' · ');
-};
+// One grammar, always: every set listed as weight×reps, the unit always on the
+// weight, sets separated by a dot. Uniform sets repeat rather than collapsing
+// into a count — special cases for "these happen to match" produced three
+// different notations in the same list, and a reader had to work out which
+// one they were looking at before they could read the numbers.
+const summarise = (entry) =>
+  setsOf(entry)
+    .filter(setFilled)
+    .map((set) => `${formatWeight(set.w)}×${set.r || '-'}`)
+    .join(' · ');
 
 const formatSet = (entry) => summarise(entry) || '-';
 
@@ -197,6 +194,7 @@ export default function WorkoutTracker() {
   }, [load, save, setReady]);
 
   // Sessions trained in the current rotation, mapped to the day they were done.
+  const today = localDateStr(now);
   const weekStart = weekStartStr(now);
   const todayPlan = scheduledFor(now);
   const isRestDay = now.getDay() === REST_DOW;
@@ -221,12 +219,14 @@ export default function WorkoutTracker() {
       : ROTATION.find((r) => !cycle[r.slot]) || null;
 
   // A session is spent once it has been trained on some other day this
-  // rotation. The day it was actually trained stays open, so a session can be
-  // finished or corrected.
+  // rotation. Two exceptions, both about correcting the record rather than
+  // repeating the work: the day it was actually trained stays open, and so
+  // does any past date — going back to a date deliberately is editing history,
+  // which the rotation has no business blocking.
   const lockedOn = (day, variant) => {
     const slot = slotKey(day, variant);
     const doneOn = cycle[slot];
-    if (!doneOn || doneOn === date || overrides[slot]) return null;
+    if (!doneOn || doneOn === date || date < today || overrides[slot]) return null;
     return doneOn;
   };
 
@@ -371,8 +371,6 @@ export default function WorkoutTracker() {
     setTheme(next);
     save('theme', next);
   };
-
-  const today = localDateStr(now);
 
   useEffect(() => {
     if (!pinned) setDate(today);
