@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.6';
+const APP_VERSION = '6.7';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -552,12 +552,20 @@ export default function WorkoutTracker() {
     () =>
       Object.entries(logs)
         .filter(([d]) => d < date)
-        .map(([d, byDay]) => ({
-          date: d,
-          entries: Object.entries(byDay[slot] || {})
-            .filter(([, entry]) => isFilled(entry))
-            .map(([name, entry]) => ({ name, ...entry })),
-        }))
+        .map(([d, byDay]) => {
+          // Program order, then anything logged under a name it no longer has.
+          // Storage order is an accident — renaming an exercise moves its key
+          // to the end of the object — and must not decide what is shown.
+          const entries = byDay[slot] || {};
+          const planned = SLOT_EXERCISES[slot] || [];
+          const orphaned = Object.keys(entries).filter((n) => !planned.includes(n));
+          return {
+            date: d,
+            entries: [...planned, ...orphaned]
+              .filter((name) => isFilled(entries[name]))
+              .map((name) => ({ name, ...entries[name] })),
+          };
+        })
         .filter((h) => h.entries.length > 0)
         .sort((a, b) => (a.date < b.date ? 1 : -1)),
     [logs, slot, date]
@@ -1098,8 +1106,8 @@ export default function WorkoutTracker() {
                   {recorded().map(({ name, entry }) => (
                     <div key={name}>
                       <div className="text-[15px] font-semibold leading-tight">{name}</div>
-                      <div className="text-[13px] text-dim nums font-semibold leading-tight mt-0.5">
-                        {summarise(entry)}
+                      <div className="mt-1.5">
+                        <SetList entry={entry} />
                       </div>
                     </div>
                   ))}
