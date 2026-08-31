@@ -17,7 +17,7 @@ export const PROGRAM = {
           note: 'Main mass driver — push to 1 rep in reserve.',
         },
         {
-          name: 'Deficit Push-Ups / Weighted Dips',
+          name: 'Deficit Push-Ups',
           target: '3x10-12',
           note: 'Add weight once bodyweight gets easy.',
         },

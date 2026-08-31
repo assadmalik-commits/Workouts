@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.7';
+const APP_VERSION = '5.8';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -75,7 +75,7 @@ const loadOf = (entry) => {
     .filter((w) => w !== '' && w !== null && w !== undefined);
   if (!weights.length) return '';
   const top = Math.max(...weights.map(Number));
-  return top === 0 ? 'body weight' : `max weight ${top}kg`;
+  return top === 0 ? 'body weight' : `max ${top}kg`;
 };
 
 // Wherever there is room to list the sets, they are listed the one way: every
@@ -140,6 +140,13 @@ const prettyDate = (iso) => {
     : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+// Exercises that have been renamed since they were first logged. Without this
+// the sets stay in the record under the old name, still counting the session
+// as trained, while showing nowhere on screen.
+const RENAMED = {
+  'Deficit Push-Ups / Weighted Dips': 'Deficit Push-Ups',
+};
+
 // v1 stored a day's entries under the bare day name ("Push"); v2 splits each
 // day into an A and a B variant. Existing logs belong to the A variants, which
 // carry v1's exercises.
@@ -152,7 +159,9 @@ function migrate(logs) {
       const target = DAYS.includes(key) ? slotKey(key, 'A') : key;
       if (DAYS.includes(key)) changed = true;
       const converted = {};
-      for (const [exName, entry] of Object.entries(entries || {})) {
+      for (const [rawName, entry] of Object.entries(entries || {})) {
+        const exName = RENAMED[rawName] || rawName;
+        if (exName !== rawName) changed = true;
         if (Array.isArray(entry?.sets)) {
           converted[exName] = entry;
           continue;
@@ -387,6 +396,19 @@ export default function WorkoutTracker() {
 
   const getEntry = (exName) =>
     (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { sets: [] };
+
+  // Everything recorded for the session on screen: the program's exercises in
+  // their own order, then anything logged under a name the program no longer
+  // has. Work that counts the session as trained must be visible somewhere,
+  // even if the program has moved on since it was done.
+  const recorded = () => {
+    const entries = (logs[date] || {})[slot] || {};
+    const planned = (session?.exercises || []).map((ex) => ex.name);
+    const orphaned = Object.keys(entries).filter((name) => !planned.includes(name));
+    return [...planned, ...orphaned]
+      .filter((name) => isFilled(entries[name]))
+      .map((name) => ({ name, entry: entries[name] }));
+  };
 
   const writeSets = (exName, sets) => {
     setLogs((prev) => {
@@ -911,21 +933,21 @@ export default function WorkoutTracker() {
                 </div>
               </div>
 
-              {/* Looking at the day it was trained: show what was done. */}
+              {/* Looking at the day it was trained: show what was done — name
+                  over load, the way the exercise rows in the session itself
+                  read. A long name and its load will not share a line at a size
+                  worth reading, and half a name is worse than two lines that
+                  were meant to be two. */}
               {locked === date && (
-                <div className="mt-5 pt-4 border-t border-line space-y-2">
-                  {session.exercises.map((ex) => {
-                    const done = getEntry(ex.name);
-                    if (!isFilled(done)) return null;
-                    return (
-                      <div key={ex.name} className="flex items-baseline justify-between gap-3">
-                        <span className="text-[15px] font-semibold min-w-0">{ex.name}</span>
-                        <span className="text-[13px] text-dim nums font-semibold shrink-0">
-                          {summarise(done)}
-                        </span>
+                <div className="mt-5 pt-4 border-t border-line space-y-3">
+                  {recorded().map(({ name, entry }) => (
+                    <div key={name}>
+                      <div className="text-[15px] font-semibold leading-tight">{name}</div>
+                      <div className="text-[13px] text-dim nums font-semibold leading-tight mt-0.5">
+                        {summarise(entry)}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
 
