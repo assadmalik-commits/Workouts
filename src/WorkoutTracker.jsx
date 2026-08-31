@@ -1,13 +1,28 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
+  Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
+  Home, Flame, Activity, User, Camera,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
+import {
+  SEXES, EMPTY_PROFILE, normaliseProfile, ageOn, bmiOf, BMI_BANDS, bandOf, healthyRange,
+  readAvatar, initialsOf,
+} from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.8';
+const APP_VERSION = '7.0';
+
+// The four places the app can be. Home is where it runs; the other three are
+// read, not worked in, which is why the session's Save bar belongs to Home
+// alone.
+const NAV = [
+  { key: 'home', label: 'Home', Icon: Home },
+  { key: 'streak', label: 'Streak', Icon: Flame },
+  { key: 'stats', label: 'Stats', Icon: Activity },
+  { key: 'profile', label: 'Profile', Icon: User },
+];
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -42,6 +57,43 @@ const weekStartStr = (d) => {
   const start = new Date(d);
   start.setDate(start.getDate() - start.getDay());
   return localDateStr(start);
+};
+
+// Training days in a row.
+//
+// Saturday is the program's rest day: the walk steps over it, so it neither
+// extends a streak nor breaks one. Today is stepped over on the same grounds
+// while it is still open — a day that has not finished yet is not a day that
+// was missed, and a streak that reads 0 every morning until the session is done
+// would be telling the lifter something untrue.
+//
+// One pass, forward from the first day ever trained, because the current run,
+// the longest run and the days that broke them are the same walk.
+const streakFrom = (trained, today) => {
+  const out = { current: 0, longest: 0, since: null, missed: [] };
+  const first = [...trained].sort()[0];
+  if (!first) return out;
+  const cursor = new Date(`${first}T00:00:00`);
+  const end = new Date(`${today}T00:00:00`);
+  let since = null;
+  while (cursor <= end) {
+    const iso = localDateStr(cursor);
+    if (cursor.getDay() !== REST_DOW) {
+      if (trained.has(iso)) {
+        if (!out.current) since = iso;
+        out.current += 1;
+        if (out.current > out.longest) out.longest = out.current;
+      } else if (iso !== today) {
+        out.current = 0;
+        since = null;
+        out.missed.push(iso);
+      }
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  out.since = since;
+  out.missed.reverse();
+  return out;
 };
 
 // A number field accepts "-40" and "1e5" as readily as "40". A negative lift
@@ -109,6 +161,31 @@ function SetList({ entry }) {
         </span>
       ))}
     </div>
+  );
+}
+
+// The lifter's photo, or the next best thing. It is small on the home header
+// and large on the profile, and never anything but a circle.
+function Avatar({ profile, size }) {
+  const initials = initialsOf(profile?.name);
+  return (
+    <span
+      style={{ width: size, height: size }}
+      className="shrink-0 rounded-full overflow-hidden bg-raised border border-line flex items-center justify-center"
+    >
+      {profile?.photo ? (
+        <img src={profile.photo} alt="" className="w-full h-full object-cover" />
+      ) : initials ? (
+        <span
+          className="font-display font-bold text-dim leading-none"
+          style={{ fontSize: Math.round(size * 0.36) }}
+        >
+          {initials}
+        </span>
+      ) : (
+        <User size={Math.round(size * 0.5)} className="text-dim" />
+      )}
+    </span>
   );
 }
 
@@ -263,6 +340,9 @@ function useStorage() {
 
 export default function WorkoutTracker() {
   const { load, save, ready, setReady, error } = useStorage();
+  // Which of the four sections is on screen. The session tabs below are a
+  // different thing entirely: they choose what to look at inside Home.
+  const [view, setView] = useState('home');
   const [tab, setTab] = useState('Push');
   const [variant, setVariant] = useState('A');
   const [logs, setLogs] = useState({}); // { date: { "Push-A": { exName: {w,r,s} } } }
@@ -284,8 +364,9 @@ export default function WorkoutTracker() {
   const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
-  const [bwInput, setBwInput] = useState('');
-  const [bwNotes, setBwNotes] = useState('');
+  const [weightInput, setWeightInput] = useState('');
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  const [photoError, setPhotoError] = useState(null);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
   const openedRef = useRef(false);
@@ -295,16 +376,20 @@ export default function WorkoutTracker() {
       const embedded = readEmbedded();
       let stored;
       let b;
+      let p;
       if (hasEmbeddedData(embedded)) {
         stored = embedded['workout-logs'] || {};
         b = embedded['bodyweight-logs'] || [];
+        p = embedded.profile;
       } else {
         stored = await load('workout-logs', {});
         b = await load('bodyweight-logs', []);
+        p = await load('profile', null);
       }
       const { logs: migrated, changed } = migrate(stored);
       setLogs(migrated);
       setBwLogs(b);
+      setProfile(normaliseProfile(p));
 
       const storedTheme = hasEmbeddedData(embedded)
         ? embedded.theme
@@ -375,6 +460,49 @@ export default function WorkoutTracker() {
     }
     return first;
   }, [logs, weekStart, today]);
+
+  // Every day, in the whole record, that ended with a session finished. Not
+  // scoped to this week — the streak is the one thing here that outlives the
+  // Sunday reset.
+  const trainedDays = useMemo(() => {
+    const days = new Set();
+    for (const [d, slots] of Object.entries(logs)) {
+      if (d > today) continue;
+      if (Object.entries(slots).some(([which, entries]) => slotComplete(which, entries))) {
+        days.add(d);
+      }
+    }
+    return days;
+  }, [logs, today]);
+
+  // Days with something written down but the session left unfinished. A missed
+  // day reads differently when the lifter turned up and stopped halfway.
+  const partialDays = useMemo(() => {
+    const days = {};
+    for (const [d, slots] of Object.entries(logs)) {
+      if (d > today || trainedDays.has(d)) continue;
+      for (const [which, entries] of Object.entries(slots)) {
+        const names = SLOT_EXERCISES[which] || [];
+        const done = names.filter((n) => isFilled(entries[n])).length;
+        if (done) days[d] = { slot: which, done, total: names.length };
+      }
+    }
+    return days;
+  }, [logs, today, trainedDays]);
+
+  const streak = useMemo(() => streakFrom(trainedDays, today), [trainedDays, today]);
+
+  // Newest first. Stored order is whatever the last write left behind, and the
+  // first entry is read as "current weight" in three places.
+  const weightHistory = useMemo(
+    () => [...bwLogs].sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [bwLogs]
+  );
+  const latestWeight = weightHistory[0] || null;
+  const age = ageOn(profile.dob, today);
+  const bmi = bmiOf(latestWeight?.weight, profile.heightCm);
+  const band = bandOf(bmi);
+  const target = healthyRange(profile.heightCm);
 
   const doneCount = Object.keys(cycle).length;
   const weekComplete = doneCount >= ROTATION.length;
@@ -453,6 +581,7 @@ export default function WorkoutTracker() {
       setPinned(when !== today);
       setTab(place.tab);
       setVariant(place.variant);
+      if (place.view) setView(place.view);
       return;
     }
     if (nextUp) {
@@ -461,38 +590,35 @@ export default function WorkoutTracker() {
     }
   }, [ready, nextUp, today]);
 
-  const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
   const isFilledSlot = (iso, which) =>
     Object.values((logs[iso] || {})[which] || {}).some(isFilled);
 
-  const locked = isBodyweight ? null : lockedOn(tab, variant);
+  const locked = lockedOn(tab, variant);
 
   // A past day with nothing logged for this session is a gap in the record,
   // not an invitation to fill one in by accident. Say so, and make writing to
   // it deliberate.
-  const session = isBodyweight ? null : PROGRAM[tab][variant];
+  const session = PROGRAM[tab][variant];
   const override = Boolean(overrides[`${slot}@${date}`]);
-  const hasRecord = !isBodyweight && isFilledSlot(date, slot);
-  const begunOn = isBodyweight ? null : begun[slot];
+  const hasRecord = isFilledSlot(date, slot);
+  const begunOn = begun[slot];
 
   // A day that has passed holds a record or it does not. Either way it is read
   // first and written to only on purpose, through the calendar.
-  const pastRecord = !isBodyweight && date < today && hasRecord && !override;
+  const pastRecord = date < today && hasRecord && !override;
 
   // Today, for a session begun on an earlier day and left unfinished: nothing
   // is recorded for it today, and logging here would start a second copy of a
   // session that belongs to another day.
   const stranded =
-    !isBodyweight &&
     date === today &&
     Boolean(begunOn) &&
     begunOn !== today &&
     !cycle[slot] &&
     !override;
 
-  const unrecorded =
-    (!isBodyweight && date < today && !hasRecord && !override) || stranded;
+  const unrecorded = (date < today && !hasRecord && !override) || stranded;
 
   const progressOn = (iso, which, exercises) => {
     const entries = (logs[iso] || {})[which] || {};
@@ -581,12 +707,18 @@ export default function WorkoutTracker() {
   };
 
   const publishRef = useRef(null);
-  const publishAll = async (nextLogs, nextBw) => {
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+  // Every publish rewrites the whole page, so it carries everything — passing
+  // one piece and letting the others default to the last render would drop
+  // whichever the caller forgot.
+  const publishAll = async (nextLogs, nextBw, nextProfile) => {
     const publish = publisherRef.current;
     if (!publish) return true;
     const res = await publish({
       'workout-logs': nextLogs,
       'bodyweight-logs': nextBw,
+      profile: nextProfile ?? profileRef.current,
       theme,
     });
     return res.ok;
@@ -606,12 +738,13 @@ export default function WorkoutTracker() {
   const placeRef = useRef(null);
   logsRef.current = logs;
   bwRef.current = bwLogs;
-  placeRef.current = { date, tab, variant };
+  placeRef.current = { date, tab, variant, view };
 
   // Written down since the last publish, and so not yet durable.
   const unpublishedRef = useRef(false);
   // The record as last written to the device; null until the load settles.
   const savedRef = useRef(null);
+  const savedProfileRef = useRef(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -631,6 +764,25 @@ export default function WorkoutTracker() {
     return () => clearTimeout(id);
   }, [logs, ready, save]);
 
+  // The profile follows the same policy as the log: typing reaches the device
+  // on its own, and publishing waits for the lifter to act or for the page to
+  // go away.
+  useEffect(() => {
+    if (!ready) return;
+    const snapshot = JSON.stringify(profile);
+    if (savedProfileRef.current === null) {
+      savedProfileRef.current = snapshot;
+      return;
+    }
+    if (snapshot === savedProfileRef.current) return;
+    const id = setTimeout(() => {
+      savedProfileRef.current = snapshot;
+      unpublishedRef.current = true;
+      save('profile', JSON.parse(snapshot));
+    }, 500);
+    return () => clearTimeout(id);
+  }, [profile, ready, save]);
+
   // A phone locking mid-set, or the tab closing, must not be a way to lose
   // work. Hidden is also the one moment a reload costs nothing.
   useEffect(() => {
@@ -641,7 +793,7 @@ export default function WorkoutTracker() {
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
       rememberPlace(placeRef.current);
-      publishRef.current?.(record, bwRef.current);
+      publishRef.current?.(record, bwRef.current, profileRef.current);
     };
     const onHide = () => {
       if (document.visibilityState === 'hidden') flush();
@@ -667,19 +819,46 @@ export default function WorkoutTracker() {
     }
   };
 
-  const saveBodyweight = async () => {
-    if (!bwInput) return;
-    const entry = { date, weight: bwInput, notes: bwNotes };
-    const next = [...bwLogs.filter((e) => e.date !== date), entry].sort((a, b) =>
-      a.date < b.date ? 1 : -1
-    );
-    const ok = await save('bodyweight-logs', next);
+  // Saving the profile also files the weight against today, so the record of
+  // what the lifter weighed keeps its dates without asking them to log it in a
+  // second place.
+  const saveProfile = async () => {
+    const clean = {
+      ...profile,
+      name: String(profile.name || '').trim(),
+      heightCm: String(profile.heightCm || '').trim(),
+    };
+    const weight = String(weightInput || '').trim();
+    const onFile = weightHistory.find((e) => e.date === today);
+    let nextBw = weightHistory;
+    if (weight && Number(weight) > 0 && (!onFile || String(onFile.weight) !== weight)) {
+      nextBw = [
+        ...weightHistory.filter((e) => e.date !== today),
+        { date: today, weight, notes: onFile?.notes || '' },
+      ].sort((a, b) => (a.date < b.date ? 1 : -1));
+    }
+    setProfile(clean);
+    setBwLogs(nextBw);
+    savedProfileRef.current = JSON.stringify(clean);
+    unpublishedRef.current = false;
+    const okProfile = await save('profile', clean);
+    const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
     rememberPlace(placeRef.current);
-    const published = await publishAll(persistable(logs), next);
-    if (ok || published) {
-      setBwLogs(next);
-      setSavedFlash('bw');
+    const published = await publishAll(persistable(logs), nextBw, clean);
+    if ((okProfile && okWeight) || published) {
+      setSavedFlash('profile');
       setTimeout(() => setSavedFlash(null), 1500);
+    }
+  };
+
+  const pickPhoto = async (file) => {
+    if (!file) return;
+    setPhotoError(null);
+    try {
+      const photo = await readAvatar(file);
+      setProfile((p) => ({ ...p, photo }));
+    } catch (e) {
+      setPhotoError('That file could not be read as a photo.');
     }
   };
 
@@ -738,11 +917,13 @@ export default function WorkoutTracker() {
     setOverrides({});
   }, [date]);
 
+  // The weight on the profile is a current weight, not a blank form to fill in
+  // daily: it shows today's entry if there is one, and the last one on record
+  // otherwise.
   useEffect(() => {
-    const existing = bwLogs.find((e) => e.date === date);
-    setBwInput(existing ? existing.weight : '');
-    setBwNotes(existing ? existing.notes : '');
-  }, [date, bwLogs]);
+    const known = weightHistory.find((e) => e.date === today) || weightHistory[0];
+    setWeightInput(known ? String(known.weight) : '');
+  }, [today, weightHistory]);
 
   if (!ready) {
     return (
@@ -760,121 +941,187 @@ export default function WorkoutTracker() {
 
   const accentOf = (v) => (v === 'A' ? 'mint' : 'amber');
 
-  return (
-    <div className="min-h-screen bg-night text-fg font-sans pb-32">
-      <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
-            <Dumbbell size={18} className="text-mint" />
-            Training Log
-          </h1>
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              onClick={toggleTheme}
-              aria-label={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
-              className="w-9 h-9 rounded-full bg-surface border border-line text-dim flex items-center justify-center"
-            >
-              {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
-            </button>
-            <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
-          </div>
-        </div>
-        <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
-          {date === today ? clock : `Viewing ${prettyDate(date)}`}
-        </div>
+  // The session the program asked for on a given date, which is what a missed
+  // day missed.
+  const dueOn = (iso) => SCHEDULE.find((x) => x.dow === dowOf(iso)) || null;
 
-        {/* The week as a strip: which session belongs to which day, what's done,
-            where today sits. Tapping a day opens that session. */}
-        <div className="mt-3 grid grid-cols-7 gap-1.5">
-          {DOW.map((label, dow) => {
-            const planned = SCHEDULE.find((x) => x.dow === dow);
-            const isToday = now.getDay() === dow;
-            const isSelected = restView ? !planned : selectedDow === dow;
-            const done = planned && cycle[planned.slot];
-            const accent = planned ? accentOf(planned.variant) : null;
-            return (
+  // The Save bar belongs to a session in progress, and so to Home alone.
+  const showSave =
+    view === 'home' && !locked && !pastRecord && !restView && !unrecorded;
+
+  const streakNote = (() => {
+    if (!trainedDays.size) return 'Finish every exercise in a session and the streak starts.';
+    if (!streak.current) {
+      return streak.missed[0]
+        ? `Last broken on ${prettyDate(streak.missed[0])}. Finish a session to start again.`
+        : 'Finish a session to start again.';
+    }
+    if (trainedDays.has(today)) return 'Today is counted. Saturday is rest — it costs nothing.';
+    if (dowOf(today) === REST_DOW) return 'Saturday is rest. The streak carries over to Sunday.';
+    return nextUp ? `Finish ${nextUp.label} today to keep it.` : 'Finish today’s session to keep it.';
+  })();
+
+  // Where this BMI falls on the scale the bands are drawn against. 15 to 42
+  // covers everything the classification distinguishes without squashing the
+  // normal band into a sliver.
+  const SCALE_MIN = 15;
+  const SCALE_MAX = 42;
+  const scalePos =
+    bmi === null
+      ? null
+      : Math.min(100, Math.max(0, ((bmi - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100));
+  const toneBg = { mint: 'bg-mint', amber: 'bg-amber', danger: 'bg-danger' };
+  const toneText = { mint: 'text-mint', amber: 'text-amber', danger: 'text-danger' };
+  const toneFill = { mint: 'bg-mint-dim', amber: 'bg-amber-dim', danger: 'bg-danger-dim' };
+
+  return (
+    <div
+      className={`min-h-screen bg-night text-fg font-sans ${showSave ? 'pb-44' : 'pb-28'}`}
+    >
+      {view === 'home' ? (
+        <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
+              <Dumbbell size={18} className="text-mint" />
+              Training Log
+            </h1>
+            <div className="flex items-center gap-2.5 shrink-0">
               <button
-                key={label}
-                onClick={() => {
-                  setOpenEx(null);
-                  if (!planned) {
-                    setRestPeek(true);
-                    return;
-                  }
-                  // The strip is this week's plan, not a way back into a day
-                  // already trained: it says how each session stands and always
-                  // stays on today. Going back to change what was logged is the
-                  // calendar's job, and only the calendar's.
-                  setRestPeek(false);
-                  setDate(today);
-                  setPinned(false);
-                  if (dowOf(today) === REST_DOW) {
-                    setCaughtUp((c) => ({ ...c, [today]: true }));
-                  }
-                  setTab(planned.day);
-                  setVariant(planned.variant);
-                }}
-                className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
-                  isSelected
-                    ? 'border-fg bg-fg'
-                    : isToday
-                      ? 'border-fg/40 bg-surface'
-                      : 'border-transparent'
-                }`}
+                onClick={toggleTheme}
+                aria-label={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
+                className="w-9 h-9 rounded-full bg-surface border border-line text-dim flex items-center justify-center"
               >
-                <span
-                  className={`text-xs font-bold uppercase tracking-wide ${
-                    isSelected ? 'text-night' : isToday ? 'text-fg' : 'text-dim'
+                {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+              </button>
+              <button onClick={() => setView('profile')} aria-label="Profile">
+                <Avatar profile={profile} size={36} />
+              </button>
+              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+            </div>
+          </div>
+          <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
+            {date === today ? clock : `Viewing ${prettyDate(date)}`}
+          </div>
+
+          {/* The week as a strip: which session belongs to which day, what's done,
+              where today sits. Tapping a day opens that session. */}
+          <div className="mt-3 grid grid-cols-7 gap-1.5">
+            {DOW.map((label, dow) => {
+              const planned = SCHEDULE.find((x) => x.dow === dow);
+              const isToday = now.getDay() === dow;
+              const isSelected = restView ? !planned : selectedDow === dow;
+              const done = planned && cycle[planned.slot];
+              const accent = planned ? accentOf(planned.variant) : null;
+              return (
+                <button
+                  key={label}
+                  onClick={() => {
+                    setOpenEx(null);
+                    if (!planned) {
+                      setRestPeek(true);
+                      return;
+                    }
+                    // The strip is this week's plan, not a way back into a day
+                    // already trained: it says how each session stands and always
+                    // stays on today. Going back to change what was logged is the
+                    // calendar's job, and only the calendar's.
+                    setRestPeek(false);
+                    setDate(today);
+                    setPinned(false);
+                    if (dowOf(today) === REST_DOW) {
+                      setCaughtUp((c) => ({ ...c, [today]: true }));
+                    }
+                    setTab(planned.day);
+                    setVariant(planned.variant);
+                  }}
+                  className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
+                    isSelected
+                      ? 'border-fg bg-fg'
+                      : isToday
+                        ? 'border-fg/40 bg-surface'
+                        : 'border-transparent'
                   }`}
                 >
-                  {planned ? label[0] : 'Rest'}
-                </span>
-                <span
-                  className={`h-1.5 w-full rounded-full ${
-                    !planned
-                      ? 'bg-line'
-                      : done
-                        ? accent === 'mint'
-                          ? 'bg-mint'
-                          : 'bg-amber'
-                        : accent === 'mint'
-                          ? 'bg-mint-dim'
-                          : 'bg-amber-dim'
-                  }`}
-                />
-              </button>
-            );
-          })}
-        </div>
+                  <span
+                    className={`text-xs font-bold uppercase tracking-wide ${
+                      isSelected ? 'text-night' : isToday ? 'text-fg' : 'text-dim'
+                    }`}
+                  >
+                    {planned ? label[0] : 'Rest'}
+                  </span>
+                  <span
+                    className={`h-1.5 w-full rounded-full ${
+                      !planned
+                        ? 'bg-line'
+                        : done
+                          ? accent === 'mint'
+                            ? 'bg-mint'
+                            : 'bg-amber'
+                          : accent === 'mint'
+                            ? 'bg-mint-dim'
+                            : 'bg-amber-dim'
+                    }`}
+                  />
+                </button>
+              );
+            })}
+          </div>
 
-        <div className="mt-2.5 flex items-center gap-2">
-          <input
-            type="date"
-            value={date}
-            max={today}
-            onChange={(e) => {
-              const picked = e.target.value;
-              if (picked === today) {
-                returnToToday();
-                return;
-              }
-              goToDate(picked);
-            }}
-            className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
-          />
-          {date !== today && (
-            <button
-              onClick={returnToToday}
-              className="text-xs font-semibold text-dim bg-surface border border-line rounded-lg px-3 py-1.5"
-            >
-              Today
-            </button>
-          )}
-          <span className="ml-auto text-[15px] text-dim nums font-semibold">
-            {doneCount}/{ROTATION.length} this week
-          </span>
-        </div>
-      </header>
+          <div className="mt-2.5 flex items-center gap-2">
+            <input
+              type="date"
+              value={date}
+              max={today}
+              onChange={(e) => {
+                const picked = e.target.value;
+                if (picked === today) {
+                  returnToToday();
+                  return;
+                }
+                goToDate(picked);
+              }}
+              className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
+            />
+            {date !== today && (
+              <button
+                onClick={returnToToday}
+                className="text-xs font-semibold text-dim bg-surface border border-line rounded-lg px-3 py-1.5"
+              >
+                Today
+              </button>
+            )}
+            <span className="ml-auto text-[15px] text-dim nums font-semibold">
+              {doneCount}/{ROTATION.length} this week
+            </span>
+          </div>
+        </header>
+      ) : (
+        <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
+              {(() => {
+                const { Icon, label } = NAV.find((n) => n.key === view);
+                return (
+                  <>
+                    <Icon size={18} className="text-mint" />
+                    {label}
+                  </>
+                );
+              })()}
+            </h1>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <button
+                onClick={toggleTheme}
+                aria-label={theme === 'light' ? 'Switch to dark' : 'Switch to light'}
+                className="w-9 h-9 rounded-full bg-surface border border-line text-dim flex items-center justify-center"
+              >
+                {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+              </button>
+              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+            </div>
+          </div>
+        </header>
+      )}
 
       {!durable && (
         <div className="mx-4 mt-3 bg-danger-dim border border-danger/40 text-danger text-sm rounded-xl px-3 py-2.5">
@@ -890,534 +1137,928 @@ export default function WorkoutTracker() {
         </div>
       )}
 
-      <div className="flex px-4 mt-4 gap-1.5">
-        {[...DAYS, 'Bodyweight'].map((d) => (
-          <button
-            key={d}
-            onClick={() => {
-              leaveRest();
-              setTab(d);
-              if (d !== 'Bodyweight') setVariant(pickVariant(d));
-              setOpenEx(null);
-            }}
-            className={`py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition ${
-              d === 'Bodyweight' ? 'shrink-0 px-3' : 'flex-1'
-            } ${tab === d ? 'bg-fg text-night' : 'bg-surface text-dim border border-line'}`}
-          >
-            {d === 'Bodyweight' ? <Scale size={14} className="inline mr-1 -mt-0.5" /> : null}
-            {d}
-          </button>
-        ))}
-      </div>
-
-      {restView && !isBodyweight ? (
-        <div className="px-4 mt-4">
-          <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
-            <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
-              <Moon size={24} />
-            </div>
-            <div className="font-display text-3xl font-bold uppercase tracking-wide mt-4">
-              Rest day
-            </div>
-            <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
-              Rest it out today, you’ll get stronger tomorrow.
-            </div>
-            <div className="mt-6 pt-5 border-t border-line text-[15px] text-dim font-semibold nums">
-              {doneCount} of {ROTATION.length} sessions done this week
-            </div>
-            {weekComplete ? (
-              <div className="text-[15px] text-dim font-semibold mt-1">The rotation reopens Sunday.</div>
-            ) : nextUp ? (
-              <button
-                onClick={() => {
-                  leaveRest();
-                  setTab(nextUp.day);
-                  setVariant(nextUp.variant);
-                  setOpenEx(null);
-                }}
-                className="mt-4 bg-raised text-fg border border-line rounded-xl px-4 py-2.5 text-sm font-semibold"
-              >
-                Catch up: {nextUp.label}
-              </button>
-            ) : null}
-          </div>
-
-          <div className="mt-6">
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
-              This week
-            </h2>
-            <div className="space-y-2">
-              {ROTATION.map((r) => {
-                const on = cycle[r.slot];
-                return (
-                  <div
-                    key={r.slot}
-                    className="bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span
-                        className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center ${
-                          on
-                            ? r.variant === 'A'
-                              ? 'bg-mint text-night'
-                              : 'bg-amber text-night'
-                            : 'bg-raised text-dim'
-                        }`}
-                      >
-                        {on ? <Check size={13} /> : null}
-                      </span>
-                      <span className="font-semibold text-[15px] truncate">{r.label}</span>
-                    </div>
-                    <span className="text-[15px] text-dim font-semibold shrink-0 nums">
-                      {on ? prettyDate(on) : DOW[r.dow]}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+      {view === 'home' && (
+        <>
+        <div className="flex px-4 mt-4 gap-1.5">
+          {DAYS.map((d) => (
+            <button
+              key={d}
+              onClick={() => {
+                leaveRest();
+                setTab(d);
+                setVariant(pickVariant(d));
+                setOpenEx(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition ${
+                tab === d ? 'bg-fg text-night' : 'bg-surface text-dim border border-line'
+              }`}
+            >
+              {d}
+            </button>
+          ))}
         </div>
-      ) : !isBodyweight ? (
-        <div className="px-4 mt-4">
-          <div className="flex gap-2 items-center">
-            {VARIANTS.map((v) => {
-              const spent = Boolean(lockedOn(tab, v));
-              const onToday = cycle[slotKey(tab, v)] === date;
-              const on = variant === v;
-              const accent = accentOf(v);
-              return (
-                <button
-                  key={v}
-                  onClick={() => {
-                    setVariant(v);
-                    setOpenEx(null);
-                  }}
-                  className={`px-4 py-2 rounded-xl text-sm font-bold border transition flex items-center gap-1.5 ${
-                    on
-                      ? accent === 'mint'
-                        ? 'bg-mint-dim text-mint border-mint/40'
-                        : 'bg-amber-dim text-amber border-amber/40'
-                      : 'bg-surface text-dim border-line'
-                  }`}
-                >
-                  Day {v}
-                  {spent || onToday ? <Check size={14} /> : null}
-                </button>
-              );
-            })}
-            <span className="ml-auto text-sm text-dim text-right font-semibold">
-              {weekComplete
-                ? 'Reopens Sunday'
-                : nextUp
-                  ? `Next: ${nextUp.label}${
-                      todayPlan && nextUp.slot === todayPlan.slot ? ' · today' : ''
-                    }`
-                  : ''}
-            </span>
-          </div>
 
-          {unrecorded ? (
-            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
-              <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
-                <CalendarX size={21} />
+        {restView ? (
+          <div className="px-4 mt-4">
+            <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
+                <Moon size={24} />
               </div>
-              <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
-                Session not recorded
+              <div className="font-display text-3xl font-bold uppercase tracking-wide mt-4">
+                Rest day
               </div>
-              <div className="text-sm text-dim mt-1">
-                Nothing was logged for {tab} {variant} on {prettyDate(date)}.
+              <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
+                Rest it out today, you’ll get stronger tomorrow.
               </div>
-              {stranded && (
-                <div className="text-sm text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
-                  It was started on {prettyDate(begunOn)} —{' '}
-                  {progressOn(begunOn, slot, session?.exercises).done} of{' '}
-                  {progressOn(begunOn, slot, session?.exercises).total} exercises. Finish it on
-                  the day it belongs to.
-                </div>
-              )}
-              {stranded ? (
-                <button
-                  onClick={() => goToDate(begunOn)}
-                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-                >
-                  Go to {prettyDate(begunOn)}
-                </button>
-              ) : (
-                <button
-                  onClick={returnToToday}
-                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-                >
-                  Back to today
-                </button>
-              )}
-              {stranded && nextUp && (
+              <div className="mt-6 pt-5 border-t border-line text-[15px] text-dim font-semibold nums">
+                {doneCount} of {ROTATION.length} sessions done this week
+              </div>
+              {weekComplete ? (
+                <div className="text-[15px] text-dim font-semibold mt-1">The rotation reopens Sunday.</div>
+              ) : nextUp ? (
                 <button
                   onClick={() => {
+                    leaveRest();
                     setTab(nextUp.day);
                     setVariant(nextUp.variant);
                     setOpenEx(null);
                   }}
-                  className="block mx-auto mt-4 text-sm font-semibold text-dim underline"
+                  className="mt-4 bg-raised text-fg border border-line rounded-xl px-4 py-2.5 text-sm font-semibold"
                 >
-                  Go to {nextUp.label}
+                  Catch up: {nextUp.label}
                 </button>
-              )}
-              {!stranded && (
-                <button
-                  onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
-                  className="block mx-auto mt-4 text-xs text-dim underline"
-                >
-                  Log it for this day anyway
-                </button>
-              )}
+              ) : null}
             </div>
-          ) : pastRecord || locked ? (
-            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
-              <div className="text-center">
-                {progressOn(date, slot, session?.exercises).done ===
-                progressOn(date, slot, session?.exercises).total ? (
-                  <div
-                    className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
-                      accentOf(variant) === 'mint'
-                        ? 'bg-mint-dim text-mint'
-                        : 'bg-amber-dim text-amber'
+
+            <div className="mt-6">
+              <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
+                This week
+              </h2>
+              <div className="space-y-2">
+                {ROTATION.map((r) => {
+                  const on = cycle[r.slot];
+                  return (
+                    <div
+                      key={r.slot}
+                      className="bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center ${
+                            on
+                              ? r.variant === 'A'
+                                ? 'bg-mint text-night'
+                                : 'bg-amber text-night'
+                              : 'bg-raised text-dim'
+                          }`}
+                        >
+                          {on ? <Check size={13} /> : null}
+                        </span>
+                        <span className="font-semibold text-[15px] truncate">{r.label}</span>
+                      </div>
+                      <span className="text-[15px] text-dim font-semibold shrink-0 nums">
+                        {on ? prettyDate(on) : DOW[r.dow]}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="px-4 mt-4">
+            <div className="flex gap-2 items-center">
+              {VARIANTS.map((v) => {
+                const spent = Boolean(lockedOn(tab, v));
+                const onToday = cycle[slotKey(tab, v)] === date;
+                const on = variant === v;
+                const accent = accentOf(v);
+                return (
+                  <button
+                    key={v}
+                    onClick={() => {
+                      setVariant(v);
+                      setOpenEx(null);
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-bold border transition flex items-center gap-1.5 ${
+                      on
+                        ? accent === 'mint'
+                          ? 'bg-mint-dim text-mint border-mint/40'
+                          : 'bg-amber-dim text-amber border-amber/40'
+                        : 'bg-surface text-dim border-line'
                     }`}
                   >
-                    <Check size={22} />
-                  </div>
-                ) : (
-                  <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
-                    <Dumbbell size={20} />
-                  </div>
-                )}
+                    Day {v}
+                    {spent || onToday ? <Check size={14} /> : null}
+                  </button>
+                );
+              })}
+              <span className="ml-auto text-sm text-dim text-right font-semibold">
+                {weekComplete
+                  ? 'Reopens Sunday'
+                  : nextUp
+                    ? `Next: ${nextUp.label}${
+                        todayPlan && nextUp.slot === todayPlan.slot ? ' · today' : ''
+                      }`
+                    : ''}
+              </span>
+            </div>
+
+            {unrecorded ? (
+              <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
+                <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
+                  <CalendarX size={21} />
+                </div>
                 <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
-                  {tab} {variant}{' '}
-                  {progressOn(date, slot, session?.exercises).done ===
-                  progressOn(date, slot, session?.exercises).total
-                    ? 'done'
-                    : `· ${progressOn(date, slot, session?.exercises).done} of ${
-                        progressOn(date, slot, session?.exercises).total
-                      }`}
+                  Session not recorded
                 </div>
                 <div className="text-sm text-dim mt-1">
-                  Trained {prettyDate(pastRecord ? date : locked)}
-                  {locked && locked !== date ? '. Comes round again on Sunday.' : ''}
+                  Nothing was logged for {tab} {variant} on {prettyDate(date)}.
                 </div>
-              </div>
-
-              {/* The day's own record: show what was done — name
-                  over load, the way the exercise rows in the session itself
-                  read. A long name and its load will not share a line at a size
-                  worth reading, and half a name is worse than two lines that
-                  were meant to be two. */}
-              {(pastRecord || locked === date) && (
-                <div className="mt-5 pt-4 border-t border-line space-y-3">
-                  {recorded().map(({ name, entry }) => (
-                    <div key={name}>
-                      <div className="text-[15px] font-semibold leading-tight">{name}</div>
-                      <div className="mt-1.5">
-                        <SetList entry={entry} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {pastRecord || locked === date ? (
-                <button
-                  onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
-                  className="w-full mt-5 bg-surface border border-line text-fg rounded-xl px-5 py-3 text-sm font-bold"
-                >
-                  Edit this session
-                </button>
-              ) : nextUp ? (
-                // Done is done: a session spent this rotation offers the way
-                // forward, not a way to train it a second time.
-                <div className="text-center">
+                {stranded && (
+                  <div className="text-sm text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
+                    It was started on {prettyDate(begunOn)} —{' '}
+                    {progressOn(begunOn, slot, session?.exercises).done} of{' '}
+                    {progressOn(begunOn, slot, session?.exercises).total} exercises. Finish it on
+                    the day it belongs to.
+                  </div>
+                )}
+                {stranded ? (
+                  <button
+                    onClick={() => goToDate(begunOn)}
+                    className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                  >
+                    Go to {prettyDate(begunOn)}
+                  </button>
+                ) : (
+                  <button
+                    onClick={returnToToday}
+                    className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                  >
+                    Back to today
+                  </button>
+                )}
+                {stranded && nextUp && (
                   <button
                     onClick={() => {
                       setTab(nextUp.day);
                       setVariant(nextUp.variant);
                       setOpenEx(null);
                     }}
-                    className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                    className="block mx-auto mt-4 text-sm font-semibold text-dim underline"
                   >
                     Go to {nextUp.label}
                   </button>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              <div
-                className={`mt-4 rounded-2xl px-4 py-3 border ${
-                  accentOf(variant) === 'mint'
-                    ? 'bg-mint-dim/50 border-mint/25'
-                    : 'bg-amber-dim/50 border-amber/25'
-                }`}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-display text-xl font-bold uppercase tracking-wide">
-                    {tab} {variant}
-                  </span>
-                  <span
-                    className={`text-xs font-bold uppercase tracking-widest ${
-                      accentOf(variant) === 'mint' ? 'text-mint' : 'text-amber'
-                    }`}
+                )}
+                {!stranded && (
+                  <button
+                    onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                    className="block mx-auto mt-4 text-xs text-dim underline"
                   >
-                    {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
-                  </span>
-                </div>
-                <div className="text-[15px] text-dim font-semibold mt-1 leading-relaxed">{session.focus}</div>
+                    Log it for this day anyway
+                  </button>
+                )}
               </div>
-
-              <div className="mt-3 space-y-1.5">
-                {session.exercises.map((ex, i) => {
-                  const entry = getEntry(ex.name);
-                  const sets = setsOf(entry);
-                  const isOpen = openEx === ex.name;
-                  const last = lastFor(ex.name);
-                  const filled = isFilled(entry);
-                  return (
+            ) : pastRecord || locked ? (
+              <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
+                <div className="text-center">
+                  {progressOn(date, slot, session?.exercises).done ===
+                  progressOn(date, slot, session?.exercises).total ? (
                     <div
-                      key={ex.name}
-                      className={`bg-surface rounded-xl border overflow-hidden ${
-                        filled ? 'border-mint/40' : 'border-line'
+                      className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
+                        accentOf(variant) === 'mint'
+                          ? 'bg-mint-dim text-mint'
+                          : 'bg-amber-dim text-amber'
                       }`}
                     >
-                      <button
-                        onClick={() => {
-                          const next = isOpen ? null : ex.name;
-                          setOpenEx(next);
-                          // Opening an untouched exercise offers its first set.
-                          if (next && setsOf(getEntry(ex.name)).length === 0) addSet(ex.name);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
-                      >
-                        <span
-                          className={`w-6 h-6 shrink-0 rounded-lg text-[11px] font-bold flex items-center justify-center nums ${
-                            filled ? 'bg-mint text-night' : 'bg-raised text-dim'
-                          }`}
-                        >
-                          {filled ? <Check size={13} /> : i + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold text-[15px] leading-tight truncate">
-                            {ex.name}
-                          </div>
-                          <div className="text-[13px] text-dim nums font-semibold truncate">
-                            {filled ? summarise(entry) : formatTarget(ex.target)}
-                          </div>
-                        </div>
-                        {isOpen ? (
-                          <ChevronUp size={17} className="text-dim shrink-0" />
-                        ) : (
-                          <ChevronDown size={17} className="text-dim shrink-0" />
-                        )}
-                      </button>
-
-                      {isOpen && (
-                        <div className="px-3 pb-3">
-                          {/* The row above already shows the target until something
-                              is logged, at which point it shows the sets instead —
-                              so the target only needs repeating once it is gone. */}
-                          {filled && (
-                            <div className="text-[13px] text-dim nums font-semibold mb-2">
-                              Target {formatTarget(ex.target)}
-                            </div>
-                          )}
-                          {last && (
-                            <div className="mb-2.5">
-                              <div className="text-[13px] text-dim font-semibold mb-1.5">Last</div>
-                              <SetList entry={last} />
-                            </div>
-                          )}
-                          {sets.map((set, si) => (
-                            <div key={si} className="flex items-center gap-2 mb-1">
-                              <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
-                                Set {si + 1}
-                              </span>
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                value={set.w}
-                                placeholder="0"
-                                onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
-                                className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
-                              />
-                              <span className="text-[13px] font-semibold text-dim shrink-0">kg</span>
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min="0"
-                                value={set.r}
-                                placeholder="0"
-                                onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
-                                className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
-                              />
-                              <span className="text-[13px] font-semibold text-dim shrink-0">reps</span>
-                              <button
-                                onClick={() => removeSet(ex.name, si)}
-                                aria-label={`Remove set ${si + 1}`}
-                                className="w-7 h-7 shrink-0 rounded-lg text-dim flex items-center justify-center ml-auto"
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
-                          ))}
-
-                          <div className="flex items-center gap-2 mt-2">
-                            <button
-                              onClick={() => addSet(ex.name)}
-                              className="border border-dashed border-line rounded-lg px-3 py-1.5 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
-                            >
-                              <Plus size={15} /> Add set
-                            </button>
-                            {loadOf(entry) && (
-                              <span className="text-[13px] text-dim nums font-semibold shrink-0">
-                                {loadOf(entry)}
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="text-[13px] text-dim mt-2.5 leading-relaxed">{ex.note}</p>
-                        </div>
-                      )}
+                      <Check size={22} />
                     </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+                  ) : (
+                    <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
+                      <Dumbbell size={20} />
+                    </div>
+                  )}
+                  <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
+                    {tab} {variant}{' '}
+                    {progressOn(date, slot, session?.exercises).done ===
+                    progressOn(date, slot, session?.exercises).total
+                      ? 'done'
+                      : `· ${progressOn(date, slot, session?.exercises).done} of ${
+                          progressOn(date, slot, session?.exercises).total
+                        }`}
+                  </div>
+                  <div className="text-sm text-dim mt-1">
+                    Trained {prettyDate(pastRecord ? date : locked)}
+                    {locked && locked !== date ? '. Comes round again on Sunday.' : ''}
+                  </div>
+                </div>
 
-          {/* Closed by default: what's below the fold should be the session, not the archive. */}
-          <div className="mt-6">
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              className="w-full flex items-center justify-between gap-2 bg-surface border border-line rounded-xl px-4 py-3"
-            >
-              <span className="font-bold text-[15px]">
-                {tab} {variant} history
-              </span>
-              <span className="flex items-center gap-2 text-dim">
-                <span className="text-[13px] nums font-semibold">
-                  {history.length === 0 ? 'none yet' : history.length}
-                </span>
-                {showHistory ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
-              </span>
-            </button>
-            {showHistory && (
-              <div className="space-y-2 mt-2">
-                {history.length === 0 && (
-                  <div className="text-[15px] text-dim">Nothing logged for this session yet.</div>
-                )}
-                {history.map((h) => (
-                  <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
-                    <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
-                    {h.entries.map((e) => (
-                      <div key={e.name} className="mt-3">
-                        <div className="text-[14px] font-bold leading-tight">{e.name}</div>
+                {/* The day's own record: show what was done — name
+                    over load, the way the exercise rows in the session itself
+                    read. A long name and its load will not share a line at a size
+                    worth reading, and half a name is worse than two lines that
+                    were meant to be two. */}
+                {(pastRecord || locked === date) && (
+                  <div className="mt-5 pt-4 border-t border-line space-y-3">
+                    {recorded().map(({ name, entry }) => (
+                      <div key={name}>
+                        <div className="text-[15px] font-semibold leading-tight">{name}</div>
                         <div className="mt-1.5">
-                          <SetList entry={e} />
+                          <SetList entry={entry} />
                         </div>
                       </div>
                     ))}
                   </div>
-                ))}
+                )}
+
+                {pastRecord || locked === date ? (
+                  <button
+                    onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                    className="w-full mt-5 bg-surface border border-line text-fg rounded-xl px-5 py-3 text-sm font-bold"
+                  >
+                    Edit this session
+                  </button>
+                ) : nextUp ? (
+                  // Done is done: a session spent this rotation offers the way
+                  // forward, not a way to train it a second time.
+                  <div className="text-center">
+                    <button
+                      onClick={() => {
+                        setTab(nextUp.day);
+                        setVariant(nextUp.variant);
+                        setOpenEx(null);
+                      }}
+                      className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                    >
+                      Go to {nextUp.label}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`mt-4 rounded-2xl px-4 py-3 border ${
+                    accentOf(variant) === 'mint'
+                      ? 'bg-mint-dim/50 border-mint/25'
+                      : 'bg-amber-dim/50 border-amber/25'
+                  }`}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-display text-xl font-bold uppercase tracking-wide">
+                      {tab} {variant}
+                    </span>
+                    <span
+                      className={`text-xs font-bold uppercase tracking-widest ${
+                        accentOf(variant) === 'mint' ? 'text-mint' : 'text-amber'
+                      }`}
+                    >
+                      {DOW[SCHEDULE.find((x) => x.slot === slot).dow]}
+                    </span>
+                  </div>
+                  <div className="text-[15px] text-dim font-semibold mt-1 leading-relaxed">{session.focus}</div>
+                </div>
+
+                <div className="mt-3 space-y-1.5">
+                  {session.exercises.map((ex, i) => {
+                    const entry = getEntry(ex.name);
+                    const sets = setsOf(entry);
+                    const isOpen = openEx === ex.name;
+                    const last = lastFor(ex.name);
+                    const filled = isFilled(entry);
+                    return (
+                      <div
+                        key={ex.name}
+                        className={`bg-surface rounded-xl border overflow-hidden ${
+                          filled ? 'border-mint/40' : 'border-line'
+                        }`}
+                      >
+                        <button
+                          onClick={() => {
+                            const next = isOpen ? null : ex.name;
+                            setOpenEx(next);
+                            // Opening an untouched exercise offers its first set.
+                            if (next && setsOf(getEntry(ex.name)).length === 0) addSet(ex.name);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+                        >
+                          <span
+                            className={`w-6 h-6 shrink-0 rounded-lg text-[11px] font-bold flex items-center justify-center nums ${
+                              filled ? 'bg-mint text-night' : 'bg-raised text-dim'
+                            }`}
+                          >
+                            {filled ? <Check size={13} /> : i + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-[15px] leading-tight truncate">
+                              {ex.name}
+                            </div>
+                            <div className="text-[13px] text-dim nums font-semibold truncate">
+                              {filled ? summarise(entry) : formatTarget(ex.target)}
+                            </div>
+                          </div>
+                          {isOpen ? (
+                            <ChevronUp size={17} className="text-dim shrink-0" />
+                          ) : (
+                            <ChevronDown size={17} className="text-dim shrink-0" />
+                          )}
+                        </button>
+
+                        {isOpen && (
+                          <div className="px-3 pb-3">
+                            {/* The row above already shows the target until something
+                                is logged, at which point it shows the sets instead —
+                                so the target only needs repeating once it is gone. */}
+                            {filled && (
+                              <div className="text-[13px] text-dim nums font-semibold mb-2">
+                                Target {formatTarget(ex.target)}
+                              </div>
+                            )}
+                            {last && (
+                              <div className="mb-2.5">
+                                <div className="text-[13px] text-dim font-semibold mb-1.5">Last</div>
+                                <SetList entry={last} />
+                              </div>
+                            )}
+                            {sets.map((set, si) => (
+                              <div key={si} className="flex items-center gap-2 mb-1">
+                                <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
+                                  Set {si + 1}
+                                </span>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  value={set.w}
+                                  placeholder="0"
+                                  onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
+                                  className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
+                                />
+                                <span className="text-[13px] font-semibold text-dim shrink-0">kg</span>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="0"
+                                  value={set.r}
+                                  placeholder="0"
+                                  onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
+                                  className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
+                                />
+                                <span className="text-[13px] font-semibold text-dim shrink-0">reps</span>
+                                <button
+                                  onClick={() => removeSet(ex.name, si)}
+                                  aria-label={`Remove set ${si + 1}`}
+                                  className="w-7 h-7 shrink-0 rounded-lg text-dim flex items-center justify-center ml-auto"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              </div>
+                            ))}
+
+                            <div className="flex items-center gap-2 mt-2">
+                              <button
+                                onClick={() => addSet(ex.name)}
+                                className="border border-dashed border-line rounded-lg px-3 py-1.5 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
+                              >
+                                <Plus size={15} /> Add set
+                              </button>
+                              {loadOf(entry) && (
+                                <span className="text-[13px] text-dim nums font-semibold shrink-0">
+                                  {loadOf(entry)}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-[13px] text-dim mt-2.5 leading-relaxed">{ex.note}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* Closed by default: what's below the fold should be the session, not the archive. */}
+            <div className="mt-6">
+              <button
+                onClick={() => setShowHistory((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 bg-surface border border-line rounded-xl px-4 py-3"
+              >
+                <span className="font-bold text-[15px]">
+                  {tab} {variant} history
+                </span>
+                <span className="flex items-center gap-2 text-dim">
+                  <span className="text-[13px] nums font-semibold">
+                    {history.length === 0 ? 'none yet' : history.length}
+                  </span>
+                  {showHistory ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                </span>
+              </button>
+              {showHistory && (
+                <div className="space-y-2 mt-2">
+                  {history.length === 0 && (
+                    <div className="text-[15px] text-dim">Nothing logged for this session yet.</div>
+                  )}
+                  {history.map((h) => (
+                    <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
+                      <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
+                      {h.entries.map((e) => (
+                        <div key={e.name} className="mt-3">
+                          <div className="text-[14px] font-bold leading-tight">{e.name}</div>
+                          <div className="mt-1.5">
+                            <SetList entry={e} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        </>
+      )}
+
+      {view === 'streak' && (
+        <div className="px-4 mt-4">
+          <div className="bg-surface border border-line rounded-2xl px-5 py-8 text-center">
+            <div
+              className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center ${
+                streak.current ? 'bg-amber-dim text-amber' : 'bg-raised text-dim'
+              }`}
+            >
+              <Flame size={26} />
+            </div>
+            <div className="font-display text-6xl font-bold nums mt-3 leading-none">
+              {streak.current}
+            </div>
+            <div className="text-xs uppercase tracking-widest text-dim font-bold mt-2">
+              {streak.current === 1 ? 'day in a row' : 'days in a row'}
+            </div>
+            <div className="text-[15px] text-dim font-semibold mt-3 leading-relaxed max-w-[22rem] mx-auto">
+              {streakNote}
+            </div>
+            {streak.since && streak.current > 1 && (
+              <div className="mt-5 pt-4 border-t border-line text-[15px] text-dim font-semibold nums">
+                Running since {prettyDate(streak.since)}
               </div>
             )}
           </div>
-        </div>
-      ) : (
-        <div className="px-4 mt-4">
-          <div className="bg-surface rounded-2xl border border-line p-5">
-            {bwLogs[0] && (
-              <div className="text-center pb-5 mb-5 border-b border-line">
-                <div className="font-display text-5xl font-bold nums">{bwLogs[0].weight}</div>
-                <div className="text-xs text-dim uppercase tracking-widest mt-1">
-                  kg · {prettyDate(bwLogs[0].date)}
-                </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="bg-surface border border-line rounded-xl px-4 py-3">
+              <div className="text-xs uppercase tracking-widest text-dim font-bold">Longest</div>
+              <div className="font-display text-2xl font-bold nums mt-0.5">
+                {streak.longest}
+                <span className="text-sm text-dim font-sans font-semibold ml-1.5">
+                  {streak.longest === 1 ? 'day' : 'days'}
+                </span>
               </div>
-            )}
-            <label className="text-xs uppercase tracking-widest text-dim font-bold">
-              Body weight (kg)
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              value={bwInput}
-              onChange={(e) => setBwInput(e.target.value)}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-lg font-semibold nums focus:border-mint focus:outline-none"
-              placeholder="69"
-            />
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Notes
-            </label>
-            <input
-              type="text"
-              value={bwNotes}
-              onChange={(e) => setBwNotes(e.target.value)}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-sm focus:border-mint focus:outline-none"
-              placeholder="fasted, morning"
-            />
-            <button
-              onClick={saveBodyweight}
-              className="w-full mt-5 bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
-            >
-              {savedFlash === 'bw' ? (
-                <>
-                  <Check size={18} /> Saved
-                </>
-              ) : (
-                'Save Entry'
-              )}
-            </button>
+            </div>
+            <div className="bg-surface border border-line rounded-xl px-4 py-3">
+              <div className="text-xs uppercase tracking-widest text-dim font-bold">This week</div>
+              <div className="font-display text-2xl font-bold nums mt-0.5">
+                {doneCount}
+                <span className="text-sm text-dim font-sans font-semibold ml-1.5">
+                  of {ROTATION.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* The same seven cells as the home strip, answering a different
+              question: not what is planned, but what actually happened. */}
+          <div className="mt-3 bg-surface border border-line rounded-xl px-4 py-3">
+            <div className="text-xs uppercase tracking-widest text-dim font-bold">
+              Week of {prettyDate(weekStart)}
+            </div>
+            <div className="mt-2.5 grid grid-cols-7 gap-1.5">
+              {DOW.map((label, dow) => {
+                const cell = new Date(`${weekStart}T00:00:00`);
+                cell.setDate(cell.getDate() + dow);
+                const iso = localDateStr(cell);
+                const isToday = iso === today;
+                const part = partialDays[iso];
+                let look = 'bg-surface border-line text-dim';
+                let mark = <span className="text-[13px] font-bold">·</span>;
+                if (dow === REST_DOW) {
+                  look = 'bg-raised border-line text-dim';
+                  mark = <Moon size={13} />;
+                } else if (trainedDays.has(iso)) {
+                  look = 'bg-mint border-mint text-night';
+                  mark = <Check size={14} />;
+                } else if (iso > today) {
+                  look = 'bg-surface border-line text-dim';
+                } else if (part) {
+                  look = 'bg-amber-dim border-amber/40 text-amber';
+                  mark = <span className="text-[11px] font-bold nums">{part.done}</span>;
+                } else if (isToday) {
+                  look = 'bg-surface border-mint/50 text-mint';
+                  mark = <Dumbbell size={13} />;
+                } else {
+                  look = 'bg-danger-dim border-danger/40 text-danger';
+                  mark = <span className="text-[13px] font-bold">—</span>;
+                }
+                return (
+                  <div key={label} className="text-center">
+                    <div
+                      className={`text-[10px] font-bold uppercase tracking-wide ${
+                        isToday ? 'text-fg' : 'text-dim'
+                      }`}
+                    >
+                      {label}
+                    </div>
+                    <div
+                      className={`mt-1 h-9 rounded-lg border flex items-center justify-center ${look}`}
+                    >
+                      {mark}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="mt-6">
             <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
-              History
+              Days missed
             </h2>
             <div className="space-y-2">
-              {bwLogs.length === 0 && <div className="text-sm text-dim">No entries yet.</div>}
-              {bwLogs.map((e) => (
-                <div
-                  key={e.date}
-                  className="bg-surface border border-line rounded-xl px-4 py-3 flex justify-between items-center gap-2"
-                >
-                  <span className="text-[15px] text-dim font-semibold font-semibold">{prettyDate(e.date)}</span>
-                  {e.notes ? (
-                    <span className="text-xs text-dim truncate flex-1 text-right">{e.notes}</span>
-                  ) : null}
-                  <span className="font-display text-xl font-bold shrink-0 nums">
-                    {e.weight}
-                    <span className="text-xs text-dim font-sans font-medium ml-1">kg</span>
-                  </span>
+              {streak.missed.length === 0 ? (
+                <div className="text-[15px] text-dim">
+                  Nothing missed since you started. Saturday is rest and never counts against you.
                 </div>
-              ))}
+              ) : (
+                streak.missed.slice(0, 10).map((iso) => {
+                  const due = dueOn(iso);
+                  const part = partialDays[iso];
+                  return (
+                    <div
+                      key={iso}
+                      className="bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[15px] font-semibold nums">{prettyDate(iso)}</div>
+                        <div className="text-[13px] text-dim font-semibold truncate">
+                          {part
+                            ? `Started — ${part.done} of ${part.total} exercises`
+                            : due
+                              ? `${due.label} was due`
+                              : 'Nothing was due'}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-xs font-bold uppercase tracking-widest shrink-0 ${
+                          part ? 'text-amber' : 'text-danger'
+                        }`}
+                      >
+                        {part ? 'Part' : 'Missed'}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Thumb-reachable: the one action taken mid-set. */}
-      {!isBodyweight && !locked && !pastRecord && !restView && !unrecorded && (
-        <div className="fixed bottom-0 left-0 right-0 z-20 bg-night border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {view === 'stats' && (
+        <div className="px-4 mt-4">
+          {bmi === null ? (
+            <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
+                <Activity size={24} />
+              </div>
+              <div className="font-display text-2xl font-bold uppercase tracking-wide mt-4">
+                Two numbers missing
+              </div>
+              <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
+                BMI needs your {!profile.heightCm ? 'height' : ''}
+                {!profile.heightCm && !latestWeight ? ' and your ' : ''}
+                {!latestWeight ? 'weight' : ''}. Both live on the profile.
+              </div>
+              <button
+                onClick={() => setView('profile')}
+                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+              >
+                Go to profile
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="bg-surface border border-line rounded-2xl px-5 py-6 text-center">
+                <div className="text-xs uppercase tracking-widest text-dim font-bold">
+                  Body mass index
+                </div>
+                <div className="font-display text-6xl font-bold nums mt-1 leading-none">
+                  {bmi.toFixed(1)}
+                </div>
+                <div
+                  className={`inline-block mt-3 rounded-full px-3.5 py-1.5 text-sm font-bold ${
+                    toneFill[band.tone]
+                  } ${toneText[band.tone]}`}
+                >
+                  {band.label}
+                </div>
+                <div className="text-[13px] text-dim font-semibold mt-2.5 nums">
+                  {latestWeight.weight} kg · {profile.heightCm} cm ·{' '}
+                  {prettyDate(latestWeight.date)}
+                </div>
+
+                {/* Where that sits among the bands, drawn to scale so the
+                    distance to the next one is the real distance. */}
+                <div className="mt-6 relative">
+                  <div className="h-2.5 rounded-full overflow-hidden flex">
+                    {BMI_BANDS.map((b) => {
+                      const from = Math.max(b.from, SCALE_MIN);
+                      const to = Math.min(b.to, SCALE_MAX);
+                      const width = ((to - from) / (SCALE_MAX - SCALE_MIN)) * 100;
+                      if (width <= 0) return null;
+                      return (
+                        <div
+                          key={b.label}
+                          style={{ width: `${width}%` }}
+                          className={`${toneBg[b.tone]} ${
+                            b.label === band.label ? '' : 'opacity-25'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div
+                    className="absolute top-0 -translate-x-1/2 -translate-y-1"
+                    style={{ left: `${scalePos}%` }}
+                  >
+                    <div className="w-1.5 h-4.5 rounded-full bg-fg border-2 border-night" />
+                  </div>
+                  <div className="relative h-4 mt-2">
+                    {[18.5, 25, 30, 35, 40].map((v) => (
+                      <span
+                        key={v}
+                        className="absolute top-0 -translate-x-1/2 text-[10px] text-dim font-bold nums"
+                        style={{ left: `${((v - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100}%` }}
+                      >
+                        {v}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {target && (
+                <div className="mt-3 bg-surface border border-line rounded-xl px-4 py-3 flex items-baseline justify-between gap-3">
+                  <span className="text-xs uppercase tracking-widest text-dim font-bold">
+                    Normal at {profile.heightCm} cm
+                  </span>
+                  <span className="font-display text-lg font-bold nums shrink-0">
+                    {target.low.toFixed(1)}–{target.high.toFixed(1)}
+                    <span className="text-xs text-dim font-sans font-medium ml-1">kg</span>
+                  </span>
+                </div>
+              )}
+
+              <p className="text-[13px] text-dim leading-relaxed mt-3">
+                WHO classification. BMI compares mass to height and cannot tell muscle from fat,
+                so six days of lifting will push it up. Read it alongside what the log says, not
+                instead of it.
+              </p>
+            </>
+          )}
+
+          <div className="mt-6">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-dim mb-2">
+              Weight
+            </h2>
+            <div className="space-y-2">
+              {weightHistory.length === 0 && (
+                <div className="text-[15px] text-dim">
+                  No entries yet. Add your weight on the profile and it is kept here by date.
+                </div>
+              )}
+              {weightHistory.map((e, i) => {
+                const previous = weightHistory[i + 1];
+                const delta = previous ? Number(e.weight) - Number(previous.weight) : null;
+                return (
+                  <div
+                    key={e.date}
+                    className="bg-surface border border-line rounded-xl px-4 py-3 flex justify-between items-center gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-semibold nums">{prettyDate(e.date)}</div>
+                      {e.notes ? (
+                        <div className="text-[13px] text-dim truncate">{e.notes}</div>
+                      ) : null}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-display text-xl font-bold nums">
+                        {e.weight}
+                        <span className="text-xs text-dim font-sans font-medium ml-1">kg</span>
+                      </div>
+                      {delta ? (
+                        <div className="text-[13px] text-dim nums font-semibold">
+                          {delta > 0 ? '+' : ''}
+                          {delta.toFixed(1)} kg
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'profile' && (
+        <div className="px-4 mt-4">
+          <div className="bg-surface border border-line rounded-2xl p-5">
+            <div className="flex items-center gap-4">
+              <Avatar profile={profile} size={72} />
+              <div className="min-w-0">
+                <label
+                  htmlFor="profile-photo"
+                  className="inline-flex items-center gap-1.5 bg-raised border border-line rounded-xl px-3 py-2 text-[13px] font-bold cursor-pointer"
+                >
+                  <Camera size={15} />
+                  {profile.photo ? 'Change photo' : 'Add photo'}
+                </label>
+                <input
+                  id="profile-photo"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    pickPhoto(e.target.files && e.target.files[0]);
+                    e.target.value = '';
+                  }}
+                />
+                {profile.photo && (
+                  <button
+                    onClick={() => setProfile((p) => ({ ...p, photo: '' }))}
+                    className="block mt-2 text-[13px] text-dim underline"
+                  >
+                    Remove photo
+                  </button>
+                )}
+              </div>
+            </div>
+            {photoError && <div className="mt-3 text-[13px] text-danger">{photoError}</div>}
+
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-5 block">
+              Name
+            </label>
+            <input
+              type="text"
+              value={profile.name}
+              onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
+              placeholder="Your name"
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold focus:border-mint focus:outline-none"
+            />
+
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
+              Date of birth
+            </label>
+            <input
+              type="date"
+              value={profile.dob}
+              max={today}
+              onChange={(e) => setProfile((p) => ({ ...p, dob: e.target.value }))}
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+            />
+            {/* Age is worked out from the date, so it can never go stale. */}
+            <div className="text-[13px] text-dim font-semibold mt-1.5 nums">
+              {age === null ? 'Your age is worked out from this.' : `${age} years old`}
+            </div>
+
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
+              Sex
+            </label>
+            <div className="flex gap-2 mt-1.5">
+              {SEXES.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setProfile((p) => ({ ...p, sex: p.sex === s ? '' : s }))}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition ${
+                    profile.sex === s
+                      ? 'bg-fg text-night border-fg'
+                      : 'bg-raised text-dim border-line'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
+              Height (cm)
+            </label>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              value={profile.heightCm}
+              placeholder="178"
+              onChange={(e) => {
+                const clean = cleanNumber(e.target.value, true);
+                if (clean !== null) setProfile((p) => ({ ...p, heightCm: clean }));
+              }}
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+            />
+
+            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
+              Weight (kg)
+            </label>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              value={weightInput}
+              placeholder="69"
+              onChange={(e) => {
+                const clean = cleanNumber(e.target.value, true);
+                if (clean !== null) setWeightInput(clean);
+              }}
+              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+            />
+            <div className="text-[13px] text-dim mt-1.5 leading-relaxed">
+              Saved against today. Every weight you enter is kept, so Stats can show the trend.
+            </div>
+          </div>
+
+          {bmi !== null && (
+            <button
+              onClick={() => setView('stats')}
+              className="w-full mt-3 bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+            >
+              <span className="text-[15px] font-semibold">BMI {bmi.toFixed(1)}</span>
+              <span className={`text-sm font-bold ${toneText[band.tone]}`}>{band.label}</span>
+            </button>
+          )}
+
           <button
-            onClick={saveLogs}
-            className="w-full bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
+            onClick={saveProfile}
+            className="w-full mt-3 bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
           >
-            {savedFlash === 'workout' ? (
+            {savedFlash === 'profile' ? (
               <>
                 <Check size={18} /> Saved
               </>
             ) : (
-              `Save ${tab} ${variant}`
+              'Save profile'
             )}
           </button>
         </div>
       )}
+
+      {/* One fixed stack at the bottom, so the Save button and the four
+          sections cannot overlap and the safe area is dealt with once. Save is
+          thumb-reachable because it is the action taken mid-set; it sits above
+          the bar rather than competing with it. */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-night border-t border-line pb-[env(safe-area-inset-bottom)]">
+        {showSave && (
+          <div className="px-4 pt-3 pb-1">
+            <button
+              onClick={saveLogs}
+              className="w-full bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
+            >
+              {savedFlash === 'workout' ? (
+                <>
+                  <Check size={18} /> Saved
+                </>
+              ) : (
+                `Save ${tab} ${variant}`
+              )}
+            </button>
+          </div>
+        )}
+        <nav className="flex">
+          {NAV.map(({ key, label, Icon }) => {
+            const on = view === key;
+            return (
+              <button
+                key={key}
+                onClick={() => {
+                  // Home is the way back to the day being trained, so tapping
+                  // it from elsewhere returns to today rather than to whatever
+                  // past date was last opened.
+                  if (key === 'home' && view === 'home' && date !== today) returnToToday();
+                  setView(key);
+                }}
+                aria-current={on ? 'page' : undefined}
+                className={`flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 ${
+                  on ? 'text-mint' : 'text-dim'
+                }`}
+              >
+                <Icon size={21} strokeWidth={on ? 2.4 : 2} />
+                <span className="text-[11px] font-bold tracking-wide">{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
 }
