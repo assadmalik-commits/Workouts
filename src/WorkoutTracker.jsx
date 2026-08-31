@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.9';
+const APP_VERSION = '6.0';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -89,33 +89,12 @@ const listSets = (entry) =>
 // The collapsed row cannot hold that for four sets without growing the page,
 // so it carries a summary instead — a count and the load moved. That is a
 // different fact about the session, not a second notation for the same one.
-// The prescription behind "4 sets of 6-8 reps": how many sets, and the top of
-// the rep range. Every target in the program is NxR or NxR-R, with any tail
-// ("+ drop set", "/leg") left off the end.
-const prescribed = (target) => {
-  const m = String(target).match(/^\s*(\d+)\s*[x×]\s*(\d+)(?:\s*-\s*(\d+))?/i);
-  return m ? { sets: Number(m[1]), reps: Number(m[3] || m[2]) } : null;
-};
-
-// Double progression: hold the weight until every prescribed set reaches the
-// top of the rep range, then add weight and start the reps again at the bottom.
-// Working that out from the numbers each session is the one piece of arithmetic
-// the log can do for the lifter.
-const readyForMore = (entry, target) => {
-  const plan = prescribed(target);
-  if (!plan) return false;
-  const filled = setsOf(entry).filter(setFilled);
-  if (filled.length < plan.sets) return false;
-  return filled.every((set) => set.r !== '' && Number(set.r) >= plan.reps);
-};
-
-const summarise = (entry, target) => {
+const summarise = (entry) => {
   const count = setsOf(entry).filter(setFilled).length;
   if (!count) return '';
   const sets = `${count} ${count === 1 ? 'set' : 'sets'}`;
   const load = loadOf(entry);
-  const line = load ? `${sets} · ${load}` : sets;
-  return target && readyForMore(entry, target) ? `${line} · ready to add weight` : line;
+  return load ? `${sets} · ${load}` : sets;
 };
 
 const formatSet = (entry) => listSets(entry) || '-';
@@ -426,10 +405,9 @@ export default function WorkoutTracker() {
     const entries = (logs[date] || {})[slot] || {};
     const planned = (session?.exercises || []).map((ex) => ex.name);
     const orphaned = Object.keys(entries).filter((name) => !planned.includes(name));
-    const targetOf = (name) => (session?.exercises || []).find((ex) => ex.name === name)?.target;
     return [...planned, ...orphaned]
       .filter((name) => isFilled(entries[name]))
-      .map((name) => ({ name, entry: entries[name], target: targetOf(name) }));
+      .map((name) => ({ name, entry: entries[name] }));
   };
 
   const writeSets = (exName, sets) => {
@@ -962,11 +940,11 @@ export default function WorkoutTracker() {
                   were meant to be two. */}
               {locked === date && (
                 <div className="mt-5 pt-4 border-t border-line space-y-3">
-                  {recorded().map(({ name, entry, target }) => (
+                  {recorded().map(({ name, entry }) => (
                     <div key={name}>
                       <div className="text-[15px] font-semibold leading-tight">{name}</div>
                       <div className="text-[13px] text-dim nums font-semibold leading-tight mt-0.5">
-                        {summarise(entry, target)}
+                        {summarise(entry)}
                       </div>
                     </div>
                   ))}
@@ -1056,7 +1034,7 @@ export default function WorkoutTracker() {
                             {ex.name}
                           </div>
                           <div className="text-[13px] text-dim nums font-semibold truncate">
-                            {filled ? summarise(entry, ex.target) : formatTarget(ex.target)}
+                            {filled ? summarise(entry) : formatTarget(ex.target)}
                           </div>
                         </div>
                         {isOpen ? (
@@ -1081,16 +1059,6 @@ export default function WorkoutTracker() {
                               Last: {formatSet(last)}
                             </div>
                           )}
-                          {/* The decision this exercise is owed, at the moment
-                              it is being made: last time every prescribed set
-                              reached the top of the range, so the weight goes
-                              up and the reps start again at the bottom. */}
-                          {last && readyForMore(last, ex.target) && (
-                            <div className="text-[13px] font-bold text-mint mb-2 leading-snug">
-                              Every set hit {prescribed(ex.target).reps} reps last time — add weight.
-                            </div>
-                          )}
-
                           {sets.map((set, si) => (
                             <div key={si} className="flex items-center gap-2 mb-1">
                               <span className="w-10 shrink-0 text-[11px] font-bold uppercase tracking-wide text-dim">
