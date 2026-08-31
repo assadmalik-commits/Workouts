@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.4';
+const APP_VERSION = '6.5';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -351,6 +351,21 @@ export default function WorkoutTracker() {
     return done;
   }, [logs, weekStart, today]);
 
+  // The day a session was begun this week, whether or not it was finished.
+  // A session belongs to the day it was started; a later day must not be able
+  // to open a second copy of it.
+  const begun = useMemo(() => {
+    const first = {};
+    for (const [d, slots] of Object.entries(logs)) {
+      if (d < weekStart || d > today) continue;
+      for (const [slot, entries] of Object.entries(slots)) {
+        if (!Object.values(entries).some(isFilled)) continue;
+        if (!first[slot] || d < first[slot]) first[slot] = d;
+      }
+    }
+    return first;
+  }, [logs, weekStart, today]);
+
   const doneCount = Object.keys(cycle).length;
   const weekComplete = doneCount >= ROTATION.length;
   const nextUp =
@@ -446,12 +461,34 @@ export default function WorkoutTracker() {
   // A past day with nothing logged for this session is a gap in the record,
   // not an invitation to fill one in by accident. Say so, and make writing to
   // it deliberate.
-  const unrecorded =
-    !isBodyweight &&
-    date < today &&
-    !isFilledSlot(date, slot) &&
-    !overrides[`${slot}@${date}`];
   const session = isBodyweight ? null : PROGRAM[tab][variant];
+  const override = Boolean(overrides[`${slot}@${date}`]);
+  const hasRecord = !isBodyweight && isFilledSlot(date, slot);
+  const begunOn = isBodyweight ? null : begun[slot];
+
+  // A day that has passed holds a record or it does not. Either way it is read
+  // first and written to only on purpose, through the calendar.
+  const pastRecord = !isBodyweight && date < today && hasRecord && !override;
+
+  // Today, for a session begun on an earlier day and left unfinished: nothing
+  // is recorded for it today, and logging here would start a second copy of a
+  // session that belongs to another day.
+  const stranded =
+    !isBodyweight &&
+    date === today &&
+    Boolean(begunOn) &&
+    begunOn !== today &&
+    !cycle[slot] &&
+    !override;
+
+  const unrecorded =
+    (!isBodyweight && date < today && !hasRecord && !override) || stranded;
+
+  const progressOn = (iso, which, exercises) => {
+    const entries = (logs[iso] || {})[which] || {};
+    const names = (exercises || []).map((ex) => ex.name);
+    return { done: names.filter((n) => isFilled(entries[n])).length, total: names.length };
+  };
 
   const getEntry = (exName) =>
     (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { sets: [] };
@@ -963,46 +1000,90 @@ export default function WorkoutTracker() {
               <div className="text-sm text-dim mt-1">
                 Nothing was logged for {tab} {variant} on {prettyDate(date)}.
               </div>
-              <button
-                onClick={returnToToday}
-                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-              >
-                Back to today
-              </button>
-              <button
-                onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
-                className="block mx-auto mt-4 text-xs text-dim underline"
-              >
-                Log it for this day anyway
-              </button>
+              {stranded && (
+                <div className="text-sm text-dim mt-2 leading-relaxed max-w-[22rem] mx-auto">
+                  It was started on {prettyDate(begunOn)} —{' '}
+                  {progressOn(begunOn, slot, session?.exercises).done} of{' '}
+                  {progressOn(begunOn, slot, session?.exercises).total} exercises. Finish it on
+                  the day it belongs to.
+                </div>
+              )}
+              {stranded ? (
+                <button
+                  onClick={() => goToDate(begunOn)}
+                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                >
+                  Go to {prettyDate(begunOn)}
+                </button>
+              ) : (
+                <button
+                  onClick={returnToToday}
+                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                >
+                  Back to today
+                </button>
+              )}
+              {stranded && nextUp && (
+                <button
+                  onClick={() => {
+                    setTab(nextUp.day);
+                    setVariant(nextUp.variant);
+                    setOpenEx(null);
+                  }}
+                  className="block mx-auto mt-4 text-sm font-semibold text-dim underline"
+                >
+                  Go to {nextUp.label}
+                </button>
+              )}
+              {!stranded && (
+                <button
+                  onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                  className="block mx-auto mt-4 text-xs text-dim underline"
+                >
+                  Log it for this day anyway
+                </button>
+              )}
             </div>
-          ) : locked ? (
+          ) : pastRecord || locked ? (
             <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
               <div className="text-center">
-                <div
-                  className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
-                    accentOf(variant) === 'mint'
-                      ? 'bg-mint-dim text-mint'
-                      : 'bg-amber-dim text-amber'
-                  }`}
-                >
-                  <Check size={22} />
-                </div>
+                {progressOn(date, slot, session?.exercises).done ===
+                progressOn(date, slot, session?.exercises).total ? (
+                  <div
+                    className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
+                      accentOf(variant) === 'mint'
+                        ? 'bg-mint-dim text-mint'
+                        : 'bg-amber-dim text-amber'
+                    }`}
+                  >
+                    <Check size={22} />
+                  </div>
+                ) : (
+                  <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
+                    <Dumbbell size={20} />
+                  </div>
+                )}
                 <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
-                  {tab} {variant} done
+                  {tab} {variant}{' '}
+                  {progressOn(date, slot, session?.exercises).done ===
+                  progressOn(date, slot, session?.exercises).total
+                    ? 'done'
+                    : `· ${progressOn(date, slot, session?.exercises).done} of ${
+                        progressOn(date, slot, session?.exercises).total
+                      }`}
                 </div>
                 <div className="text-sm text-dim mt-1">
-                  Trained {prettyDate(locked)}
-                  {locked === date ? '' : '. Comes round again on Sunday.'}
+                  Trained {prettyDate(pastRecord ? date : locked)}
+                  {locked && locked !== date ? '. Comes round again on Sunday.' : ''}
                 </div>
               </div>
 
-              {/* Looking at the day it was trained: show what was done — name
+              {/* The day's own record: show what was done — name
                   over load, the way the exercise rows in the session itself
                   read. A long name and its load will not share a line at a size
                   worth reading, and half a name is worse than two lines that
                   were meant to be two. */}
-              {locked === date && (
+              {(pastRecord || locked === date) && (
                 <div className="mt-5 pt-4 border-t border-line space-y-3">
                   {recorded().map(({ name, entry }) => (
                     <div key={name}>
@@ -1015,7 +1096,7 @@ export default function WorkoutTracker() {
                 </div>
               )}
 
-              {locked === date ? (
+              {pastRecord || locked === date ? (
                 <button
                   onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
                   className="w-full mt-5 bg-surface border border-line text-fg rounded-xl px-5 py-3 text-sm font-bold"
@@ -1290,7 +1371,7 @@ export default function WorkoutTracker() {
       )}
 
       {/* Thumb-reachable: the one action taken mid-set. */}
-      {!isBodyweight && !locked && !restView && !unrecorded && (
+      {!isBodyweight && !locked && !pastRecord && !restView && !unrecorded && (
         <div className="fixed bottom-0 left-0 right-0 z-20 bg-night border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={saveLogs}
