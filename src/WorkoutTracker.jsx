@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.6';
+const APP_VERSION = '5.7';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -61,9 +61,22 @@ const formatWeight = (w) => {
   return `${w}kg`;
 };
 
-// Total load moved: every set counted, not one set multiplied.
-const volumeOf = (entry) =>
-  setsOf(entry).reduce((sum, set) => sum + (Number(set.w) || 0) * (Number(set.r) || 0), 0);
+// The load an exercise is remembered by: its heaviest set. Total volume added
+// every set together into a number that meant little and read as a lot — 528 kg
+// for four sets topping out at 20. The top set is what gets chased next week.
+//
+// One phrasing, used wherever the load is named: "max weight 20kg", or "body
+// weight" when nothing was carried, or nothing at all when no weight was
+// written down.
+const loadOf = (entry) => {
+  const weights = setsOf(entry)
+    .filter(setFilled)
+    .map((set) => set.w)
+    .filter((w) => w !== '' && w !== null && w !== undefined);
+  if (!weights.length) return '';
+  const top = Math.max(...weights.map(Number));
+  return top === 0 ? 'body weight' : `max weight ${top}kg`;
+};
 
 // Wherever there is room to list the sets, they are listed the one way: every
 // set spelled out, both units named, separated by commas.
@@ -79,8 +92,9 @@ const listSets = (entry) =>
 const summarise = (entry) => {
   const count = setsOf(entry).filter(setFilled).length;
   if (!count) return '';
-  const total = volumeOf(entry);
-  return `${count} ${count === 1 ? 'set' : 'sets'}${total ? ` · ${total} kg` : ''}`;
+  const sets = `${count} ${count === 1 ? 'set' : 'sets'}`;
+  const load = loadOf(entry);
+  return load ? `${sets} · ${load}` : sets;
 };
 
 const formatSet = (entry) => listSets(entry) || '-';
@@ -1066,9 +1080,9 @@ export default function WorkoutTracker() {
                             >
                               <Plus size={15} /> Add set
                             </button>
-                            {volumeOf(entry) > 0 && (
+                            {loadOf(entry) && (
                               <span className="text-[13px] text-dim nums font-semibold shrink-0">
-                                {volumeOf(entry)} kg total
+                                {loadOf(entry)}
                               </span>
                             )}
                           </div>
