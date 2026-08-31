@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.5';
+const APP_VERSION = '5.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -84,6 +84,27 @@ const summarise = (entry) => {
 };
 
 const formatSet = (entry) => listSets(entry) || '-';
+
+// The record, stripped to what was actually written down. Opening an exercise
+// offers a blank set so there is a row to type into, and that blank row lands
+// in state like any other — but it is not a change to the record, and treating
+// it as one is what made merely browsing the plan republish the page.
+const persistable = (logs) => {
+  const out = {};
+  for (const [date, slots] of Object.entries(logs || {})) {
+    const keptSlots = {};
+    for (const [slot, entries] of Object.entries(slots || {})) {
+      const kept = {};
+      for (const [name, entry] of Object.entries(entries || {})) {
+        const sets = setsOf(entry).filter(setFilled);
+        if (sets.length) kept[name] = { sets };
+      }
+      if (Object.keys(kept).length) keptSlots[slot] = kept;
+    }
+    if (Object.keys(keptSlots).length) out[date] = keptSlots;
+  }
+  return out;
+};
 
 // "4x6-8" is shorthand a lifter has to decode. Say it: "4 sets of 6-8 reps",
 // keeping whatever the program appended — "+ drop set", "/leg".
@@ -422,41 +443,53 @@ export default function WorkoutTracker() {
   };
   publishRef.current = publishAll;
 
-  // Typing is the save. Losing a session because the button went unpressed is
-  // the one failure this app cannot afford, so the device copy is written as
-  // soon as the numbers stop moving and the durable copy follows a few seconds
-  // later. The button is a way to force both at once and see it confirmed.
+  // Typing is the save: numbers reach the device as soon as they stop moving,
+  // so a session cannot be lost by never pressing the button.
+  //
+  // Publishing is not, and must never be on a timer. Saving a new version of
+  // the page reloads every open view of it, this one included — mid-session
+  // that throws the lifter back to today's session with everything closed. It
+  // happens only when the lifter acts (the Save button) or when the page is
+  // going away, which is the moment the device copy might not survive.
   const logsRef = useRef(logs);
   const bwRef = useRef(bwLogs);
   logsRef.current = logs;
   bwRef.current = bwLogs;
 
-  const flush = useCallback(() => {
-    save('workout-logs', logsRef.current);
-    publishRef.current?.(logsRef.current, bwRef.current);
-  }, [save]);
+  // Written down since the last publish, and so not yet durable.
+  const unpublishedRef = useRef(false);
+  // The record as last written to the device; null until the load settles.
+  const savedRef = useRef(null);
 
-  const settledRef = useRef(false);
   useEffect(() => {
     if (!ready) return;
-    // The first pass after loading is the loaded data, not an edit.
-    if (!settledRef.current) {
-      settledRef.current = true;
+    const snapshot = JSON.stringify(persistable(logs));
+    // The first pass after loading is the loaded record, not an edit.
+    if (savedRef.current === null) {
+      savedRef.current = snapshot;
       return;
     }
-    const local = setTimeout(() => save('workout-logs', logsRef.current), 500);
-    const durableWrite = setTimeout(
-      () => publishRef.current?.(logsRef.current, bwRef.current),
-      3000
-    );
-    return () => {
-      clearTimeout(local);
-      clearTimeout(durableWrite);
-    };
+    // Opening and closing exercises moves state without changing the record.
+    if (snapshot === savedRef.current) return;
+    const id = setTimeout(() => {
+      savedRef.current = snapshot;
+      unpublishedRef.current = true;
+      save('workout-logs', JSON.parse(snapshot));
+    }, 500);
+    return () => clearTimeout(id);
   }, [logs, ready, save]);
 
-  // A phone locking mid-set, or the tab closing, must not be a way to lose work.
+  // A phone locking mid-set, or the tab closing, must not be a way to lose
+  // work. Hidden is also the one moment a reload costs nothing.
   useEffect(() => {
+    const flush = () => {
+      const record = persistable(logsRef.current);
+      savedRef.current = JSON.stringify(record);
+      save('workout-logs', record);
+      if (!unpublishedRef.current) return;
+      unpublishedRef.current = false;
+      publishRef.current?.(record, bwRef.current);
+    };
     const onHide = () => {
       if (document.visibilityState === 'hidden') flush();
     };
@@ -466,11 +499,14 @@ export default function WorkoutTracker() {
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('pagehide', flush);
     };
-  }, [flush]);
+  }, [save]);
 
   const saveLogs = async () => {
-    const ok = await save('workout-logs', logs);
-    const published = await publishAll(logs, bwLogs);
+    const record = persistable(logs);
+    savedRef.current = JSON.stringify(record);
+    unpublishedRef.current = false;
+    const ok = await save('workout-logs', record);
+    const published = await publishAll(record, bwLogs);
     if (ok || published) {
       setSavedFlash('workout');
       setTimeout(() => setSavedFlash(null), 1500);
@@ -484,7 +520,7 @@ export default function WorkoutTracker() {
       a.date < b.date ? 1 : -1
     );
     const ok = await save('bodyweight-logs', next);
-    const published = await publishAll(logs, next);
+    const published = await publishAll(persistable(logs), next);
     if (ok || published) {
       setBwLogs(next);
       setSavedFlash('bw');
