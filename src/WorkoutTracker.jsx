@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.5';
+const APP_VERSION = '6.6';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -92,13 +92,25 @@ const loadOf = (entry) => {
   return top === 0 ? 'body weight' : `max ${top}kg`;
 };
 
-// Wherever there is room to list the sets, they are listed the one way: every
-// set spelled out, both units named, separated by commas.
-const listSets = (entry) =>
-  setsOf(entry)
-    .filter(setFilled)
-    .map((set) => `${formatWeight(set.w)} × ${set.r || '-'} reps`)
-    .join(', ');
+// A set list is a table, not a sentence. Spelled out as prose, seven exercises
+// wrap into a paragraph of notes and the ramp is lost in the commas. One pill
+// per set keeps every number and reads left to right the way it was lifted.
+function SetList({ entry }) {
+  const sets = setsOf(entry).filter(setFilled);
+  if (!sets.length) return <span className="text-[13px] text-dim">-</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {sets.map((set, i) => (
+        <span
+          key={i}
+          className="bg-raised border border-line rounded-lg px-2 py-1 text-[13px] nums font-semibold"
+        >
+          {formatWeight(set.w)} × {set.r || '-'}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 // The collapsed row cannot hold that for four sets without growing the page,
 // so it carries a summary instead — a count and the load moved. That is a
@@ -110,8 +122,6 @@ const summarise = (entry) => {
   const load = loadOf(entry);
   return load ? `${sets} · ${load}` : sets;
 };
-
-const formatSet = (entry) => listSets(entry) || '-';
 
 // The record, stripped to what was actually written down. Opening an exercise
 // offers a blank set so there is a row to type into, and that blank row lands
@@ -1200,8 +1210,9 @@ export default function WorkoutTracker() {
                             </div>
                           )}
                           {last && (
-                            <div className="text-[13px] text-dim nums font-semibold mb-2 leading-snug">
-                              Last: {formatSet(last)}
+                            <div className="mb-2.5">
+                              <div className="text-[13px] text-dim font-semibold mb-1.5">Last</div>
+                              <SetList entry={last} />
                             </div>
                           )}
                           {sets.map((set, si) => (
@@ -1288,8 +1299,11 @@ export default function WorkoutTracker() {
                   <div key={h.date} className="bg-surface border border-line rounded-xl px-4 py-3">
                     <div className="text-[15px] font-bold">{prettyDate(h.date)}</div>
                     {h.entries.map((e) => (
-                      <div key={e.name} className="text-[13px] text-dim mt-1 nums font-semibold">
-                        {e.name}: {formatSet(e)}
+                      <div key={e.name} className="mt-3">
+                        <div className="text-[14px] font-bold leading-tight">{e.name}</div>
+                        <div className="mt-1.5">
+                          <SetList entry={e} />
+                        </div>
                       </div>
                     ))}
                   </div>
