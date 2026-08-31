@@ -1,7 +1,27 @@
 # Design notes
 
 Reasoning behind where this app is going, and why the order is what it is.
-Written 31 August 2026, at v6.0.
+Written 31 August 2026 at v6.0; the scope decision below settled 1 September
+at v6.5.
+
+## Scope: one lifter, no distribution
+
+**Decided.** This is Assad's log, used daily by Assad, and nobody else. App
+stores, accounts and multi-device sync are deferred until that changes — which
+it may never.
+
+This is not a limitation, it is the thing that makes the app good. It removes
+the tension that ran through the earlier version of this note: that every
+generalising feature walks toward the crowded end of the market and away from
+what makes this app unusual. There is no market. Features are judged on
+whether one lifter wants them, which is a far easier question to answer and a
+far better app to use.
+
+What that drops: accounts, a backend, sync, App Review, a privacy policy, a
+data-deletion flow, crash reporting, support. None of it is needed to log a
+workout.
+
+What survives, and why, is below.
 
 ## Where it stands
 
@@ -25,32 +45,47 @@ no longer has still appear on screen. Before that fix, renaming stranded the
 sets: they stayed in the record, still counted the session as trained, and were
 visible nowhere.
 
-That was one rename, done by hand. Let people pick their own exercises and the
-fragility becomes structural.
+This was first argued as groundwork for letting *users* choose exercises. That
+argument is gone with the scope decision, and it was the weaker one anyway. The
+real driver is the lifter renaming his own exercises: six renames in the first
+week of use, each needing a `RENAMED` entry, and one orphan bug that had to be
+fixed before a rename stopped hiding the sets logged under the old name.
+
+That happens at one user exactly as it happens at a thousand.
 
 The fix: exercises get stable IDs; names become display-only; logs reference
 IDs. It is cheap now — one user, one week of data — and gets steadily more
 expensive.
 
-## Then: a PWA, not an app store
+## Then: a PWA, for the lifter and not for a store
 
-Add-to-home-screen, offline, no review, no fee. It gets most of "this is a real
-app" for very little, and it is the honest way to find out whether the store
-version is worth the rest.
+Add-to-home-screen, offline, no review, no fee. Worth doing on its own merits,
+not as a step toward distribution:
 
-The store route is not mostly a coding problem. A Capacitor wrapper is days;
-the rest is a backend, a developer account and review (a thin web-view wrapper
-risks rejection under Apple's minimum-functionality guideline), a privacy
-policy, a data-deletion flow, privacy disclosures, crash reporting and support.
-Check the current fees and review rules directly — they change.
+- A real icon, set by the app rather than borrowed from the page that hosts it.
+  While the log lives as an artifact, the home-screen icon is whatever
+  claude.ai's page provides; the only lever is an emoji, and a wordmark needs a
+  Shortcuts workaround.
+- Full screen, without a browser address bar taking a strip of a 440px phone.
+- **It removes the publish-reload entirely.** Saving currently republishes the
+  page, and publishing reloads every open view — which is what threw the lifter
+  onto the next day mid-session on 1 September. On its own hosting there is no
+  publish, so there is no reload.
 
-## Later, with open questions
+That third point is the strongest reason and was not obvious until the bug
+turned up in use.
+
+If the store question ever returns: it is not mostly a coding problem. A
+Capacitor wrapper is days; the rest is everything listed under the scope
+decision above. Check the current fees and review rules directly — they
+change.
+
+## Later, judged only on whether one lifter wants them
 
 ### Exercise dropdown per muscle group
 
-Natural fit, but it needs the ID work first. Also needs a decision on whether
-the library is fixed or user-extensible; user-extensible means user-authored
-names, which is where duplicate and near-duplicate entries start.
+Needs the ID work first. With one user the library can simply be
+user-extensible — there is nobody else's duplicates to worry about.
 
 ### Choosing a 4, 5 or 6-day split
 
@@ -70,24 +105,9 @@ date, switched when the lifter chooses.
 
 ### User profile
 
-Needs a reason to exist. Bodyweight is already tracked. Units, available
-equipment and a programme start date would earn their place; a name and a photo
-would not.
-
-The real thing behind "profile" is **accounts**, and that is the actual fork in
-the road: there is no server at all today. Multi-device sync means auth, a
-backend, and being responsible for someone else's data.
-
-## The tension to keep in view
-
-What makes this app unusual is that it is opinionated. Most loggers are
-free-form. Free exercise selection and variable splits both make it more
-general — which walks toward the crowded part of the market (Strong, Hevy,
-Boostcamp, all mature with free tiers) and away from the thing that is
-distinctive.
-
-"A log that holds you to your programme" is an angle. "Another exercise logger"
-is not. Each generalising feature should be weighed against that.
+Mostly moot now. Bodyweight is already tracked. Units, available equipment and
+a programme start date would earn their place as *settings*; there is no second
+user for a profile to distinguish.
 
 ## Tried and removed — do not re-propose without asking
 
