@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.7';
+const APP_VERSION = '6.8';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -728,6 +728,15 @@ export default function WorkoutTracker() {
       setVariant(nextUp.variant);
     }
   }, [today, pinned, nextUp]);
+
+  // Choosing to edit a day is a decision about that day, taken now. Leaving it
+  // ends the edit: without this the unlock outlived the visit, so coming back
+  // to the date reopened the form instead of showing the record, and only a
+  // save appeared to close it — because saving republishes and the reload took
+  // the state with it.
+  useEffect(() => {
+    setOverrides({});
+  }, [date]);
 
   useEffect(() => {
     const existing = bwLogs.find((e) => e.date === date);
