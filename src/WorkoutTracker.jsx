@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.3';
+const APP_VERSION = '5.4';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -599,19 +599,18 @@ export default function WorkoutTracker() {
                     setRestPeek(true);
                     return;
                   }
-                  leaveRest();
+                  // The strip is this week's plan, not a way back into a day
+                  // already trained: it says how each session stands and always
+                  // stays on today. Going back to change what was logged is the
+                  // calendar's job, and only the calendar's.
+                  setRestPeek(false);
+                  setDate(today);
+                  setPinned(false);
+                  if (dowOf(today) === REST_DOW) {
+                    setCaughtUp((c) => ({ ...c, [today]: true }));
+                  }
                   setTab(planned.day);
                   setVariant(planned.variant);
-                  // A day already trained opens its record on the day it was
-                  // trained; one still to come opens today, ready to log.
-                  const trainedOn = cycle[planned.slot];
-                  if (trainedOn) {
-                    setDate(trainedOn);
-                    setPinned(trainedOn !== today);
-                  } else {
-                    setDate(today);
-                    setPinned(false);
-                  }
                 }}
                 className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
                   isSelected
