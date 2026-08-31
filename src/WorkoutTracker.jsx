@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.0';
+const APP_VERSION = '6.1';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -145,6 +145,7 @@ const prettyDate = (iso) => {
 // as trained, while showing nowhere on screen.
 const RENAMED = {
   'Deficit Push-Ups / Weighted Dips': 'Deficit Push-Ups',
+  'Weighted Pull-Ups / Lat Pulldown': 'Lat Pulldown',
 };
 
 // v1 stored a day's entries under the bare day name ("Push"); v2 splits each
