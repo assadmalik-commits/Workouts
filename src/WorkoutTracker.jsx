@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.3';
+const APP_VERSION = '6.4';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -23,6 +23,11 @@ const slotKey = (day, variant) => `${day}-${variant}`;
 // again.
 const ROTATION = VARIANTS.flatMap((variant) =>
   DAYS.map((day) => ({ day, variant, slot: slotKey(day, variant), label: `${day} ${variant}` }))
+);
+
+// Every exercise a session asks for, by slot.
+const SLOT_EXERCISES = Object.fromEntries(
+  ROTATION.map((r) => [r.slot, PROGRAM[r.day][r.variant].exercises.map((ex) => ex.name)])
 );
 
 // The week runs Sunday to Friday, one session a day, with Saturday off.
@@ -52,6 +57,15 @@ const setsOf = (entry) => (Array.isArray(entry?.sets) ? entry.sets : []);
 const setFilled = (set) => Boolean(set && (set.w !== '' || set.r !== ''));
 
 const isFilled = (entry) => setsOf(entry).some(setFilled);
+
+// A session is trained when every exercise in it has been logged. Anything
+// less is a session in progress: one recorded exercise used to tick the day
+// off, move the rotation on, and count toward the week.
+const slotComplete = (slot, entries) => {
+  const names = SLOT_EXERCISES[slot];
+  if (!names || !names.length) return false;
+  return names.every((name) => isFilled((entries || {})[name]));
+};
 
 // A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
 // push-ups. BW says that on its own; spelling out the kg carried is noise.
@@ -138,6 +152,30 @@ const prettyDate = (iso) => {
   return Number.isNaN(d.getTime())
     ? iso
     : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// Publishing saves a new version of the page, and every open view reloads to
+// it — this one included. Without a note of where the lifter was, that reload
+// boots them onto whatever session is next due, mid-set. The note lives in
+// sessionStorage so it survives the reload and nothing else.
+const RESUME_KEY = 'resume-session';
+
+const rememberPlace = (place) => {
+  try {
+    sessionStorage.setItem(RESUME_KEY, JSON.stringify(place));
+  } catch (e) {
+    // Blocked storage only costs the lifter their place, not their log.
+  }
+};
+
+const takePlace = () => {
+  try {
+    const raw = sessionStorage.getItem(RESUME_KEY);
+    sessionStorage.removeItem(RESUME_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
 };
 
 // Exercises that have been renamed since they were first logged. Without this
@@ -306,7 +344,7 @@ export default function WorkoutTracker() {
       // Work dated after today has not happened; it must not fill the week.
       if (d < weekStart || d > today) continue;
       for (const [slot, entries] of Object.entries(slots)) {
-        if (!Object.values(entries).some(isFilled)) continue;
+        if (!slotComplete(slot, entries)) continue;
         if (!done[slot] || d < done[slot]) done[slot] = d;
       }
     }
@@ -377,15 +415,26 @@ export default function WorkoutTracker() {
     }
   };
 
-  // Open on the session that's actually due rather than on a spent one.
+  // Open on the session that's actually due — unless a publish reloaded the
+  // page out from under the lifter, in which case put them back where they
+  // were. Saving mid-session must not read as being moved on to the next one.
   useEffect(() => {
     if (!ready || openedRef.current) return;
     openedRef.current = true;
+    const place = takePlace();
+    if (place && place.tab && place.variant) {
+      const when = place.date && place.date <= today ? place.date : today;
+      setDate(when);
+      setPinned(when !== today);
+      setTab(place.tab);
+      setVariant(place.variant);
+      return;
+    }
     if (nextUp) {
       setTab(nextUp.day);
       setVariant(nextUp.variant);
     }
-  }, [ready, nextUp]);
+  }, [ready, nextUp, today]);
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
@@ -499,8 +548,10 @@ export default function WorkoutTracker() {
   // going away, which is the moment the device copy might not survive.
   const logsRef = useRef(logs);
   const bwRef = useRef(bwLogs);
+  const placeRef = useRef(null);
   logsRef.current = logs;
   bwRef.current = bwLogs;
+  placeRef.current = { date, tab, variant };
 
   // Written down since the last publish, and so not yet durable.
   const unpublishedRef = useRef(false);
@@ -534,6 +585,7 @@ export default function WorkoutTracker() {
       save('workout-logs', record);
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
+      rememberPlace(placeRef.current);
       publishRef.current?.(record, bwRef.current);
     };
     const onHide = () => {
@@ -552,6 +604,7 @@ export default function WorkoutTracker() {
     savedRef.current = JSON.stringify(record);
     unpublishedRef.current = false;
     const ok = await save('workout-logs', record);
+    rememberPlace(placeRef.current);
     const published = await publishAll(record, bwLogs);
     if (ok || published) {
       setSavedFlash('workout');
@@ -566,6 +619,7 @@ export default function WorkoutTracker() {
       a.date < b.date ? 1 : -1
     );
     const ok = await save('bodyweight-logs', next);
+    rememberPlace(placeRef.current);
     const published = await publishAll(persistable(logs), next);
     if (ok || published) {
       setBwLogs(next);
