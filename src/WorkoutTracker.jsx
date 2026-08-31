@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2,
+  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.1';
+const APP_VERSION = '5.2';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -318,7 +318,19 @@ export default function WorkoutTracker() {
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
+  const isFilledSlot = (iso, which) =>
+    Object.values((logs[iso] || {})[which] || {}).some(isFilled);
+
   const locked = isBodyweight ? null : lockedOn(tab, variant);
+
+  // A past day with nothing logged for this session is a gap in the record,
+  // not an invitation to fill one in by accident. Say so, and make writing to
+  // it deliberate.
+  const unrecorded =
+    !isBodyweight &&
+    date < today &&
+    !isFilledSlot(date, slot) &&
+    !overrides[`${slot}@${date}`];
   const session = isBodyweight ? null : PROGRAM[tab][variant];
 
   const getEntry = (exName) =>
@@ -722,7 +734,31 @@ export default function WorkoutTracker() {
             </span>
           </div>
 
-          {locked ? (
+          {unrecorded ? (
+            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
+              <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
+                <CalendarX size={21} />
+              </div>
+              <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
+                Session not recorded
+              </div>
+              <div className="text-sm text-dim mt-1">
+                Nothing was logged for {tab} {variant} on {prettyDate(date)}.
+              </div>
+              <button
+                onClick={returnToToday}
+                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+              >
+                Back to today
+              </button>
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                className="block mx-auto mt-4 text-xs text-dim underline"
+              >
+                Log it for this day anyway
+              </button>
+            </div>
+          ) : locked ? (
             <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
               <div className="text-center">
                 <div
@@ -1041,7 +1077,7 @@ export default function WorkoutTracker() {
       )}
 
       {/* Thumb-reachable: the one action taken mid-set. */}
-      {!isBodyweight && !locked && !restView && (
+      {!isBodyweight && !locked && !restView && !unrecorded && (
         <div className="fixed bottom-0 left-0 right-0 z-20 bg-night border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={saveLogs}
