@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '6.1';
+const APP_VERSION = '6.3';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -146,6 +146,10 @@ const prettyDate = (iso) => {
 const RENAMED = {
   'Deficit Push-Ups / Weighted Dips': 'Deficit Push-Ups',
   'Weighted Pull-Ups / Lat Pulldown': 'Lat Pulldown',
+  'Deadlift / Rack Pull': 'Rack Pull',
+  'Reverse Pec-Deck / Band Pull-Apart': 'Reverse Pec-Deck',
+  'Back Extension / Glute-Ham Raise': 'Glute-Ham Raise',
+  'Donkey / Standing Calf Raise': 'Donkey Calf Raise',
 };
 
 // v1 stored a day's entries under the bare day name ("Push"); v2 splits each
@@ -284,7 +288,12 @@ export default function WorkoutTracker() {
 
   const todayPlan = scheduledFor(now);
   const selectedIsRest = dowOf(date) === REST_DOW;
-  const restView = restPeek || (selectedIsRest && !caughtUp[date]);
+  // Rest is the default for the day being lived, not a verdict on the past.
+  // Going back to a date asks what was recorded on it, and a Saturday answers
+  // that the same way every other day does — the session, or nothing. Tapping
+  // Rest in the strip is still a deliberate look at the rest day, whatever
+  // date is on screen.
+  const restView = restPeek || (selectedIsRest && date >= today && !caughtUp[date]);
   // Leaving the rest day is always a choice about the day on screen.
   const leaveRest = () => {
     setRestPeek(false);

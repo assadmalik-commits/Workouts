@@ -126,7 +126,7 @@ export const PROGRAM = {
       focus: 'Back thickness (hinge + unilateral), traps, brachialis',
       exercises: [
         {
-          name: 'Deadlift / Rack Pull',
+          name: 'Rack Pull',
           target: '4x5-6',
           note: 'Biggest missing stimulus — overall back thickness.',
         },
@@ -141,7 +141,7 @@ export const PROGRAM = {
           note: "Different angle than Pull A's wide-grip row.",
         },
         {
-          name: 'Reverse Pec-Deck / Band Pull-Apart',
+          name: 'Reverse Pec-Deck',
           target: '3x15-20',
           note: 'Rear delt volume, alternative to face pulls.',
         },
@@ -211,12 +211,12 @@ export const PROGRAM = {
           note: "Unilateral, glute-biased vs. Legs A's lunge.",
         },
         {
-          name: 'Back Extension / Glute-Ham Raise',
+          name: 'Glute-Ham Raise',
           target: '3x12-15',
           note: 'Posterior chain finisher.',
         },
         {
-          name: 'Donkey / Standing Calf Raise',
+          name: 'Donkey Calf Raise',
           target: '4x15-20',
           note: 'Second calf session, keeps frequency up.',
         },
