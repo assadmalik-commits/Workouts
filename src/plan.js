@@ -100,7 +100,7 @@ export const PROGRAM = {
           note: 'Mid-back thickness, strict form.',
         },
         {
-          name: 'Weighted Pull-Ups / Lat Pulldown',
+          name: 'Lat Pulldown',
           target: '4x8-10',
           note: 'Primary width builder.',
         },
