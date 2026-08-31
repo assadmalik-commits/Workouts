@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.0';
+const APP_VERSION = '5.1';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -256,7 +256,10 @@ export default function WorkoutTracker() {
   const lockedOn = (day, variant) => {
     const slot = slotKey(day, variant);
     const doneOn = cycle[slot];
-    if (!doneOn || doneOn === date || date < today || overrides[slot]) return null;
+    if (!doneOn || overrides[`${slot}@${date}`]) return null;
+    // The session being trained right now stays open; everything already done
+    // shows as done, and is edited only on purpose.
+    if (doneOn === date && date === today) return null;
     return doneOn;
   };
 
@@ -720,40 +723,73 @@ export default function WorkoutTracker() {
           </div>
 
           {locked ? (
-            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
-              <div
-                className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
-                  accentOf(variant) === 'mint'
-                    ? 'bg-mint-dim text-mint'
-                    : 'bg-amber-dim text-amber'
-                }`}
-              >
-                <Check size={22} />
-              </div>
-              <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
-                {tab} {variant} done
-              </div>
-              <div className="text-sm text-dim mt-1">
-                Trained {prettyDate(locked)}. Comes round again on Sunday.
-              </div>
-              {nextUp && (
-                <button
-                  onClick={() => {
-                    setTab(nextUp.day);
-                    setVariant(nextUp.variant);
-                    setOpenEx(null);
-                  }}
-                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
+              <div className="text-center">
+                <div
+                  className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
+                    accentOf(variant) === 'mint'
+                      ? 'bg-mint-dim text-mint'
+                      : 'bg-amber-dim text-amber'
+                  }`}
                 >
-                  Go to {nextUp.label}
-                </button>
+                  <Check size={22} />
+                </div>
+                <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
+                  {tab} {variant} done
+                </div>
+                <div className="text-sm text-dim mt-1">
+                  Trained {prettyDate(locked)}
+                  {locked === date ? '' : '. Comes round again on Sunday.'}
+                </div>
+              </div>
+
+              {/* Looking at the day it was trained: show what was done. */}
+              {locked === date && (
+                <div className="mt-5 pt-4 border-t border-line space-y-2">
+                  {session.exercises.map((ex) => {
+                    const done = getEntry(ex.name);
+                    if (!isFilled(done)) return null;
+                    return (
+                      <div key={ex.name} className="flex items-baseline justify-between gap-3">
+                        <span className="text-[15px] font-semibold min-w-0">{ex.name}</span>
+                        <span className="text-[13px] text-dim nums font-semibold shrink-0">
+                          {summarise(done)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
-              <button
-                onClick={() => setOverrides((o) => ({ ...o, [slot]: true }))}
-                className="block mx-auto mt-4 text-xs text-dim underline"
-              >
-                Train it again anyway
-              </button>
+
+              {locked === date ? (
+                <button
+                  onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                  className="w-full mt-5 bg-surface border border-line text-fg rounded-xl px-5 py-3 text-sm font-bold"
+                >
+                  Edit this session
+                </button>
+              ) : (
+                <div className="text-center">
+                  {nextUp && (
+                    <button
+                      onClick={() => {
+                        setTab(nextUp.day);
+                        setVariant(nextUp.variant);
+                        setOpenEx(null);
+                      }}
+                      className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                    >
+                      Go to {nextUp.label}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                    className="block mx-auto mt-4 text-xs text-dim underline"
+                  >
+                    Train it again anyway
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
