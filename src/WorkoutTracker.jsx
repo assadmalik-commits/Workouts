@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2,
+  Dumbbell, Scale, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '4.7';
+const APP_VERSION = '5.2';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -216,6 +216,16 @@ export default function WorkoutTracker() {
   // Sessions trained in the current rotation, mapped to the day they were done.
   const today = localDateStr(now);
   const weekStart = weekStartStr(now);
+  // Which cell in the strip the selected date falls on, or -1 when looking at
+  // a date outside this week.
+  const weekEnd = (() => {
+    const d = new Date(`${weekStart}T00:00:00`);
+    d.setDate(d.getDate() + 6);
+    return localDateStr(d);
+  })();
+  const selectedDow =
+    date >= weekStart && date <= weekEnd ? new Date(`${date}T00:00:00`).getDay() : -1;
+
   const todayPlan = scheduledFor(now);
   const isRestDay = now.getDay() === REST_DOW;
 
@@ -246,13 +256,36 @@ export default function WorkoutTracker() {
   const lockedOn = (day, variant) => {
     const slot = slotKey(day, variant);
     const doneOn = cycle[slot];
-    if (!doneOn || doneOn === date || date < today || overrides[slot]) return null;
+    if (!doneOn || overrides[`${slot}@${date}`]) return null;
+    // The session being trained right now stays open; everything already done
+    // shows as done, and is edited only on purpose.
+    if (doneOn === date && date === today) return null;
     return doneOn;
   };
 
   // Land on a session that's still available for the day being opened.
   const pickVariant = (day) =>
     VARIANTS.find((v) => !lockedOn(day, v)) || VARIANTS[0];
+
+  // The session trained on a given day, if any. Going to a date is going to
+  // what was done on it — landing on whatever session happened to be open
+  // shows an empty form for a day that already has a record.
+  const sessionOn = (iso) => {
+    const slots = logs[iso] || {};
+    return ROTATION.find((r) => Object.values(slots[r.slot] || {}).some(isFilled)) || null;
+  };
+
+  const goToDate = (picked) => {
+    setDate(picked);
+    setPinned(true);
+    setRestView(false);
+    setOpenEx(null);
+    const trained = sessionOn(picked);
+    if (trained) {
+      setTab(trained.day);
+      setVariant(trained.variant);
+    }
+  };
 
   // Coming back to today from a past date left the session you were correcting
   // on screen — and today refuses it, so you landed on its lock card rather
@@ -285,7 +318,19 @@ export default function WorkoutTracker() {
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
+  const isFilledSlot = (iso, which) =>
+    Object.values((logs[iso] || {})[which] || {}).some(isFilled);
+
   const locked = isBodyweight ? null : lockedOn(tab, variant);
+
+  // A past day with nothing logged for this session is a gap in the record,
+  // not an invitation to fill one in by accident. Say so, and make writing to
+  // it deliberate.
+  const unrecorded =
+    !isBodyweight &&
+    date < today &&
+    !isFilledSlot(date, slot) &&
+    !overrides[`${slot}@${date}`];
   const session = isBodyweight ? null : PROGRAM[tab][variant];
 
   const getEntry = (exName) =>
@@ -462,6 +507,7 @@ export default function WorkoutTracker() {
           {DOW.map((label, dow) => {
             const planned = SCHEDULE.find((x) => x.dow === dow);
             const isToday = now.getDay() === dow;
+            const isSelected = restView ? !planned : selectedDow === dow && !restView;
             const done = planned && cycle[planned.slot];
             const accent = planned ? accentOf(planned.variant) : null;
             return (
@@ -476,16 +522,28 @@ export default function WorkoutTracker() {
                   setRestView(false);
                   setTab(planned.day);
                   setVariant(planned.variant);
+                  // A day already trained opens its record on the day it was
+                  // trained; one still to come opens today, ready to log.
+                  const trainedOn = cycle[planned.slot];
+                  if (trainedOn) {
+                    setDate(trainedOn);
+                    setPinned(trainedOn !== today);
+                  } else {
+                    setDate(today);
+                    setPinned(false);
+                  }
                 }}
                 className={`rounded-lg py-1.5 flex flex-col items-center gap-1.5 border transition ${
-                  (!planned && restView) || (isToday && !restView)
-                    ? 'border-fg/40 bg-surface'
-                    : 'border-transparent'
+                  isSelected
+                    ? 'border-fg bg-fg'
+                    : isToday
+                      ? 'border-fg/40 bg-surface'
+                      : 'border-transparent'
                 }`}
               >
                 <span
                   className={`text-xs font-bold uppercase tracking-wide ${
-                    isToday ? 'text-fg' : 'text-dim'
+                    isSelected ? 'text-night' : isToday ? 'text-fg' : 'text-dim'
                   }`}
                 >
                   {planned ? label[0] : 'Rest'}
@@ -518,15 +576,14 @@ export default function WorkoutTracker() {
                 returnToToday();
                 return;
               }
-              setDate(picked);
-              setPinned(true);
+              goToDate(picked);
             }}
             className="bg-raised text-fg text-xs rounded-lg px-2.5 py-1.5 border border-line nums"
           />
           {date !== today && (
             <button
               onClick={returnToToday}
-              className="text-xs font-semibold text-night bg-fg rounded-lg px-3 py-1.5"
+              className="text-xs font-semibold text-dim bg-surface border border-line rounded-lg px-3 py-1.5"
             >
               Today
             </button>
@@ -677,41 +734,98 @@ export default function WorkoutTracker() {
             </span>
           </div>
 
-          {locked ? (
+          {unrecorded ? (
             <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-8 text-center">
-              <div
-                className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
-                  accentOf(variant) === 'mint'
-                    ? 'bg-mint-dim text-mint'
-                    : 'bg-amber-dim text-amber'
-                }`}
-              >
-                <Check size={22} />
+              <div className="mx-auto w-11 h-11 rounded-full bg-raised text-dim flex items-center justify-center">
+                <CalendarX size={21} />
               </div>
               <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
-                {tab} {variant} done
+                Session not recorded
               </div>
               <div className="text-sm text-dim mt-1">
-                Trained {prettyDate(locked)}. Comes round again on Sunday.
+                Nothing was logged for {tab} {variant} on {prettyDate(date)}.
               </div>
-              {nextUp && (
-                <button
-                  onClick={() => {
-                    setTab(nextUp.day);
-                    setVariant(nextUp.variant);
-                    setOpenEx(null);
-                  }}
-                  className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-                >
-                  Go to {nextUp.label}
-                </button>
-              )}
               <button
-                onClick={() => setOverrides((o) => ({ ...o, [slot]: true }))}
+                onClick={returnToToday}
+                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+              >
+                Back to today
+              </button>
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
                 className="block mx-auto mt-4 text-xs text-dim underline"
               >
-                Train it again anyway
+                Log it for this day anyway
               </button>
+            </div>
+          ) : locked ? (
+            <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
+              <div className="text-center">
+                <div
+                  className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
+                    accentOf(variant) === 'mint'
+                      ? 'bg-mint-dim text-mint'
+                      : 'bg-amber-dim text-amber'
+                  }`}
+                >
+                  <Check size={22} />
+                </div>
+                <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
+                  {tab} {variant} done
+                </div>
+                <div className="text-sm text-dim mt-1">
+                  Trained {prettyDate(locked)}
+                  {locked === date ? '' : '. Comes round again on Sunday.'}
+                </div>
+              </div>
+
+              {/* Looking at the day it was trained: show what was done. */}
+              {locked === date && (
+                <div className="mt-5 pt-4 border-t border-line space-y-2">
+                  {session.exercises.map((ex) => {
+                    const done = getEntry(ex.name);
+                    if (!isFilled(done)) return null;
+                    return (
+                      <div key={ex.name} className="flex items-baseline justify-between gap-3">
+                        <span className="text-[15px] font-semibold min-w-0">{ex.name}</span>
+                        <span className="text-[13px] text-dim nums font-semibold shrink-0">
+                          {summarise(done)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {locked === date ? (
+                <button
+                  onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                  className="w-full mt-5 bg-surface border border-line text-fg rounded-xl px-5 py-3 text-sm font-bold"
+                >
+                  Edit this session
+                </button>
+              ) : (
+                <div className="text-center">
+                  {nextUp && (
+                    <button
+                      onClick={() => {
+                        setTab(nextUp.day);
+                        setVariant(nextUp.variant);
+                        setOpenEx(null);
+                      }}
+                      className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
+                    >
+                      Go to {nextUp.label}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
+                    className="block mx-auto mt-4 text-xs text-dim underline"
+                  >
+                    Train it again anyway
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -963,7 +1077,7 @@ export default function WorkoutTracker() {
       )}
 
       {/* Thumb-reachable: the one action taken mid-set. */}
-      {!isBodyweight && !locked && !restView && (
+      {!isBodyweight && !locked && !restView && !unrecorded && (
         <div className="fixed bottom-0 left-0 right-0 z-20 bg-night border-t border-line px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={saveLogs}
