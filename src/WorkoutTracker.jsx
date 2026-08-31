@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.2';
+const APP_VERSION = '5.3';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -30,6 +30,7 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SCHEDULE = ROTATION.map((session, i) => ({ ...session, dow: i }));
 const REST_DOW = 6;
 const scheduledFor = (d) => SCHEDULE.find((x) => x.dow === d.getDay()) || null;
+const dowOf = (iso) => new Date(`${iso}T00:00:00`).getDay();
 
 // Sunday opens the week, so the rotation resets on its own each Sunday.
 const weekStartStr = (d) => {
@@ -37,6 +38,11 @@ const weekStartStr = (d) => {
   start.setDate(start.getDate() - start.getDay());
   return localDateStr(start);
 };
+
+// A number field accepts "-40" and "1e5" as readily as "40". A negative lift
+// is not a thing, and a negative volume in the week's total is worse.
+const cleanNumber = (value, allowDecimal) =>
+  (allowDecimal ? /^\d*\.?\d*$/ : /^\d*$/).test(value) ? value : null;
 
 // An entry is a list of sets: [{ w, r }, ...]. One row per set, because sets
 // are not interchangeable — a ramp of 10, 12, 14, 16 recorded as four sets of
@@ -170,8 +176,11 @@ export default function WorkoutTracker() {
   const [now, setNow] = useState(() => new Date());
   // Sessions the lifter chose to repeat anyway, for this visit only.
   const [overrides, setOverrides] = useState({});
-  // Saturday is a destination of its own rather than a blank in the strip.
-  const [restView, setRestView] = useState(false);
+  // Saturday is rest for the date being viewed, not just for today. Training
+  // one anyway is a deliberate catch-up, and only for that date.
+  const [caughtUp, setCaughtUp] = useState({});
+  // Tapping Rest looks at the rest day from any weekday, without moving off it.
+  const [restPeek, setRestPeek] = useState(false);
   const [theme, setTheme] = useState('light');
   const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
@@ -227,19 +236,26 @@ export default function WorkoutTracker() {
     date >= weekStart && date <= weekEnd ? new Date(`${date}T00:00:00`).getDay() : -1;
 
   const todayPlan = scheduledFor(now);
-  const isRestDay = now.getDay() === REST_DOW;
+  const selectedIsRest = dowOf(date) === REST_DOW;
+  const restView = restPeek || (selectedIsRest && !caughtUp[date]);
+  // Leaving the rest day is always a choice about the day on screen.
+  const leaveRest = () => {
+    setRestPeek(false);
+    if (selectedIsRest) setCaughtUp((c) => ({ ...c, [date]: true }));
+  };
 
   const cycle = useMemo(() => {
     const done = {};
     for (const [d, slots] of Object.entries(logs)) {
-      if (d < weekStart) continue;
+      // Work dated after today has not happened; it must not fill the week.
+      if (d < weekStart || d > today) continue;
       for (const [slot, entries] of Object.entries(slots)) {
         if (!Object.values(entries).some(isFilled)) continue;
         if (!done[slot] || d < done[slot]) done[slot] = d;
       }
     }
     return done;
-  }, [logs, weekStart]);
+  }, [logs, weekStart, today]);
 
   const doneCount = Object.keys(cycle).length;
   const weekComplete = doneCount >= ROTATION.length;
@@ -276,9 +292,11 @@ export default function WorkoutTracker() {
   };
 
   const goToDate = (picked) => {
+    // A session cannot have been trained on a day that hasn't happened.
+    if (!picked || picked > today) return;
     setDate(picked);
     setPinned(true);
-    setRestView(false);
+    setRestPeek(false);
     setOpenEx(null);
     const trained = sessionOn(picked);
     if (trained) {
@@ -294,6 +312,7 @@ export default function WorkoutTracker() {
   const returnToToday = () => {
     setDate(today);
     setPinned(false);
+    setRestPeek(false);
     const trainedOn = cycle[slotKey(tab, variant)];
     if (trainedOn && trainedOn !== today && nextUp) {
       setTab(nextUp.day);
@@ -306,15 +325,11 @@ export default function WorkoutTracker() {
   useEffect(() => {
     if (!ready || openedRef.current) return;
     openedRef.current = true;
-    if (isRestDay) {
-      setRestView(true);
-      return;
-    }
     if (nextUp) {
       setTab(nextUp.day);
       setVariant(nextUp.variant);
     }
-  }, [ready, nextUp, isRestDay]);
+  }, [ready, nextUp]);
 
   const isBodyweight = tab === 'Bodyweight';
   const slot = slotKey(tab, variant);
@@ -347,8 +362,10 @@ export default function WorkoutTracker() {
   };
 
   const updateSet = (exName, index, field, value) => {
+    const clean = cleanNumber(value, field === 'w');
+    if (clean === null) return;
     const sets = setsOf(getEntry(exName)).map((set, i) =>
-      i === index ? { ...set, [field]: value } : set
+      i === index ? { ...set, [field]: clean } : set
     );
     writeSets(exName, sets);
   };
@@ -390,6 +407,7 @@ export default function WorkoutTracker() {
     return null;
   };
 
+  const publishRef = useRef(null);
   const publishAll = async (nextLogs, nextBw) => {
     const publish = publisherRef.current;
     if (!publish) return true;
@@ -400,6 +418,53 @@ export default function WorkoutTracker() {
     });
     return res.ok;
   };
+  publishRef.current = publishAll;
+
+  // Typing is the save. Losing a session because the button went unpressed is
+  // the one failure this app cannot afford, so the device copy is written as
+  // soon as the numbers stop moving and the durable copy follows a few seconds
+  // later. The button is a way to force both at once and see it confirmed.
+  const logsRef = useRef(logs);
+  const bwRef = useRef(bwLogs);
+  logsRef.current = logs;
+  bwRef.current = bwLogs;
+
+  const flush = useCallback(() => {
+    save('workout-logs', logsRef.current);
+    publishRef.current?.(logsRef.current, bwRef.current);
+  }, [save]);
+
+  const settledRef = useRef(false);
+  useEffect(() => {
+    if (!ready) return;
+    // The first pass after loading is the loaded data, not an edit.
+    if (!settledRef.current) {
+      settledRef.current = true;
+      return;
+    }
+    const local = setTimeout(() => save('workout-logs', logsRef.current), 500);
+    const durableWrite = setTimeout(
+      () => publishRef.current?.(logsRef.current, bwRef.current),
+      3000
+    );
+    return () => {
+      clearTimeout(local);
+      clearTimeout(durableWrite);
+    };
+  }, [logs, ready, save]);
+
+  // A phone locking mid-set, or the tab closing, must not be a way to lose work.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [flush]);
 
   const saveLogs = async () => {
     const ok = await save('workout-logs', logs);
@@ -456,6 +521,21 @@ export default function WorkoutTracker() {
     if (!pinned) setDate(today);
   }, [today, pinned]);
 
+  // Midnight moves the app on to the new day: the session that is due now, not
+  // whatever was left on screen when the date turned over.
+  const dayRef = useRef(today);
+  useEffect(() => {
+    if (dayRef.current === today) return;
+    dayRef.current = today;
+    if (pinned) return;
+    setRestPeek(false);
+    setOpenEx(null);
+    if (nextUp) {
+      setTab(nextUp.day);
+      setVariant(nextUp.variant);
+    }
+  }, [today, pinned, nextUp]);
+
   useEffect(() => {
     const existing = bwLogs.find((e) => e.date === date);
     setBwInput(existing ? existing.weight : '');
@@ -507,7 +587,7 @@ export default function WorkoutTracker() {
           {DOW.map((label, dow) => {
             const planned = SCHEDULE.find((x) => x.dow === dow);
             const isToday = now.getDay() === dow;
-            const isSelected = restView ? !planned : selectedDow === dow && !restView;
+            const isSelected = restView ? !planned : selectedDow === dow;
             const done = planned && cycle[planned.slot];
             const accent = planned ? accentOf(planned.variant) : null;
             return (
@@ -516,10 +596,10 @@ export default function WorkoutTracker() {
                 onClick={() => {
                   setOpenEx(null);
                   if (!planned) {
-                    setRestView(true);
+                    setRestPeek(true);
                     return;
                   }
-                  setRestView(false);
+                  leaveRest();
                   setTab(planned.day);
                   setVariant(planned.variant);
                   // A day already trained opens its record on the day it was
@@ -570,6 +650,7 @@ export default function WorkoutTracker() {
           <input
             type="date"
             value={date}
+            max={today}
             onChange={(e) => {
               const picked = e.target.value;
               if (picked === today) {
@@ -613,7 +694,7 @@ export default function WorkoutTracker() {
           <button
             key={d}
             onClick={() => {
-              setRestView(false);
+              leaveRest();
               setTab(d);
               if (d !== 'Bodyweight') setVariant(pickVariant(d));
               setOpenEx(null);
@@ -648,7 +729,7 @@ export default function WorkoutTracker() {
             ) : nextUp ? (
               <button
                 onClick={() => {
-                  setRestView(false);
+                  leaveRest();
                   setTab(nextUp.day);
                   setVariant(nextUp.variant);
                   setOpenEx(null);
@@ -920,6 +1001,7 @@ export default function WorkoutTracker() {
                               <input
                                 type="number"
                                 inputMode="decimal"
+                                min="0"
                                 value={set.w}
                                 placeholder="0"
                                 onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
@@ -929,6 +1011,7 @@ export default function WorkoutTracker() {
                               <input
                                 type="number"
                                 inputMode="numeric"
+                                min="0"
                                 value={set.r}
                                 placeholder="0"
                                 onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
