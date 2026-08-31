@@ -7,7 +7,7 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '5.4';
+const APP_VERSION = '5.5';
 
 // The local calendar date, not the UTC one. toISOString() is UTC, so anywhere
 // ahead of it a late-evening session would be filed under the previous day.
@@ -174,7 +174,9 @@ export default function WorkoutTracker() {
   // The date follows the clock until a past session is picked deliberately.
   const [pinned, setPinned] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  // Sessions the lifter chose to repeat anyway, for this visit only.
+  // Dates whose record the lifter opened for correction, for this visit only.
+  // Reached from the calendar and nowhere else: a session done this rotation
+  // cannot be trained a second time, only written down more accurately.
   const [overrides, setOverrides] = useState({});
   // Saturday is rest for the date being viewed, not just for today. Training
   // one anyway is a deliberate catch-up, and only for that date.
@@ -884,28 +886,22 @@ export default function WorkoutTracker() {
                 >
                   Edit this session
                 </button>
-              ) : (
+              ) : nextUp ? (
+                // Done is done: a session spent this rotation offers the way
+                // forward, not a way to train it a second time.
                 <div className="text-center">
-                  {nextUp && (
-                    <button
-                      onClick={() => {
-                        setTab(nextUp.day);
-                        setVariant(nextUp.variant);
-                        setOpenEx(null);
-                      }}
-                      className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-                    >
-                      Go to {nextUp.label}
-                    </button>
-                  )}
                   <button
-                    onClick={() => setOverrides((o) => ({ ...o, [`${slot}@${date}`]: true }))}
-                    className="block mx-auto mt-4 text-xs text-dim underline"
+                    onClick={() => {
+                      setTab(nextUp.day);
+                      setVariant(nextUp.variant);
+                      setOpenEx(null);
+                    }}
+                    className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
                   >
-                    Train it again anyway
+                    Go to {nextUp.label}
                   </button>
                 </div>
-              )}
+              ) : null}
             </div>
           ) : (
             <>
