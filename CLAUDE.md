@@ -90,6 +90,12 @@ can check.
 sets unless `RENAMED` carries them across. See the design notes: stable IDs are
 the next piece of work for exactly this reason.
 
+**Until IDs land, do not add anything else that keys off an exercise name.**
+Every feature that does has to be unpicked later, and the app is headed
+somewhere a stranger names their own exercises. A new feature that needs to
+refer to an exercise is a reason to do the IDs first, not a reason to key one
+more thing by name.
+
 ## Working style
 
 Clarify before building. When the ask is a question about whether something is
