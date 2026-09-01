@@ -81,6 +81,24 @@ disappearing address bar both fire scroll events, and a bar that moves when you
 did not ask it to is a different proposition mid-set than on a browsing
 screen.
 
+## A session's own weekday, not the rotation's
+
+The rotation reopens on Sunday, but each session has its own day inside it —
+Push A Sunday, Pull A Monday, Legs A Tuesday, and so on. A spent session used to
+say "comes round again on Sunday" whichever one you were looking at, which
+answers a question about the rotation when the lifter asked one about the
+session in front of them. It now names the session's own next weekday and date.
+
+"The rotation reopens Sunday" is still said on the rest-day card and beside a
+finished week, because there it is the right fact.
+
+Found alongside it: a session trained yesterday and looked at today read
+**"Legs A · 0 of 6"** under a dumbbell rather than "Legs A done" under a tick.
+The card counted the day being *looked at* instead of the day the record was
+written on. The two are the same for a past date opened through the calendar,
+and different for a session the rotation is holding shut — which is exactly when
+the card shows.
+
 ## The streak counts days, not weeks
 
 Saturday is the program's rest day, so the walk steps over it: it neither

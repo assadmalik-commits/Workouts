@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.7';
+const APP_VERSION = '7.8';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -239,6 +239,36 @@ const formatTarget = (target) => {
   if (tail.startsWith('/')) out += ` per ${tail.slice(1)}`;
   else if (tail) out += ` ${tail}`;
   return out;
+};
+
+// The next date a given session is due. The rotation reopens on Sunday, but
+// each session has its own weekday inside it — Push A on Sunday, Pull A on
+// Monday, Legs A on Tuesday and so on. Saying "Sunday" for all six answers a
+// question about the rotation when the lifter asked one about the session in
+// front of them.
+//
+// `|| 7` because landing on the session's own weekday means next week's: this
+// only shows for a session already trained in the current rotation.
+const nextDueDate = (slot, fromIso) => {
+  const planned = SCHEDULE.find((x) => x.slot === slot);
+  if (!planned || !fromIso) return null;
+  const from = new Date(`${fromIso}T00:00:00`);
+  if (Number.isNaN(from.getTime())) return null;
+  from.setDate(from.getDate() + ((planned.dow - from.getDay() + 7) % 7 || 7));
+  return localDateStr(from);
+};
+
+const weekdayName = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { weekday: 'long' });
+};
+
+// Day and month, for a date the year of which is never in question.
+const shortDate = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 };
 
 const prettyDate = (iso) => {
@@ -660,6 +690,11 @@ export default function WorkoutTracker() {
     !override;
 
   const unrecorded = (date < today && !hasRecord && !override) || stranded;
+
+  // The day this session's record actually lives on: the date being looked at
+  // when it holds one, otherwise the day the rotation says it was trained.
+  const recordDate = pastRecord ? date : locked;
+  const nextDue = nextDueDate(slot, today);
 
   const progressOn = (iso, which, exercises) => {
     const entries = (logs[iso] || {})[which] || {};
@@ -1387,8 +1422,11 @@ export default function WorkoutTracker() {
             ) : pastRecord || locked ? (
               <div className="mt-4 bg-surface border border-line rounded-2xl px-5 py-6">
                 <div className="text-center">
-                  {progressOn(date, slot, session?.exercises).done ===
-                  progressOn(date, slot, session?.exercises).total ? (
+                  {/* Count the day the record was written on, not the day being
+                      looked at. Reading today's date for a session trained
+                      yesterday showed a finished session as "0 of 6". */}
+                  {progressOn(recordDate, slot, session?.exercises).done ===
+                  progressOn(recordDate, slot, session?.exercises).total ? (
                     <div
                       className={`mx-auto w-11 h-11 rounded-full flex items-center justify-center ${
                         accentOf(variant) === 'mint'
@@ -1405,16 +1443,18 @@ export default function WorkoutTracker() {
                   )}
                   <div className="font-display text-2xl font-bold uppercase tracking-wide mt-3">
                     {tab} {variant}{' '}
-                    {progressOn(date, slot, session?.exercises).done ===
-                    progressOn(date, slot, session?.exercises).total
+                    {progressOn(recordDate, slot, session?.exercises).done ===
+                    progressOn(recordDate, slot, session?.exercises).total
                       ? 'done'
-                      : `· ${progressOn(date, slot, session?.exercises).done} of ${
-                          progressOn(date, slot, session?.exercises).total
+                      : `· ${progressOn(recordDate, slot, session?.exercises).done} of ${
+                          progressOn(recordDate, slot, session?.exercises).total
                         }`}
                   </div>
                   <div className="text-sm text-dim mt-1">
-                    Trained {prettyDate(pastRecord ? date : locked)}
-                    {locked && locked !== date ? '. Comes round again on Sunday.' : ''}
+                    Trained {prettyDate(recordDate)}
+                    {locked && locked !== date && nextDue
+                      ? `. Comes round again on ${weekdayName(nextDue)}, ${shortDate(nextDue)}.`
+                      : ''}
                   </div>
                 </div>
 
