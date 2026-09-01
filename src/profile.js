@@ -1,0 +1,208 @@
+// The lifter, and what can be worked out about them.
+//
+// WHO standards throughout, unaltered. There are other classifications — the
+// 2004 Asian consultation puts overweight at 23 rather than 25, and NICE now
+// prefers waist-to-height for people carrying muscle — but mixing standards in
+// one app produces a number nobody can look up. One standard, named on screen.
+
+export const SEXES = ['Male', 'Female'];
+
+export const EMPTY_PROFILE = { name: '', dob: '', sex: '', heightCm: '', photo: '' };
+
+// Stored profiles predate fields that were added later, and a missing key
+// reads as `undefined` in an input, which React treats as uncontrolled.
+export const normaliseProfile = (raw) => ({ ...EMPTY_PROFILE, ...(raw || {}) });
+
+export const profileFilled = (p) =>
+  Boolean(p && (p.name || p.dob || p.sex || p.heightCm || p.photo));
+
+// Age is derived, never stored: a number typed in once is wrong within a year
+// and there is nothing on screen to say so.
+export const ageOn = (dob, iso) => {
+  if (!dob || !iso) return null;
+  const born = new Date(`${dob}T00:00:00`);
+  const on = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(born.getTime()) || Number.isNaN(on.getTime())) return null;
+  let age = on.getFullYear() - born.getFullYear();
+  const months = on.getMonth() - born.getMonth();
+  if (months < 0 || (months === 0 && on.getDate() < born.getDate())) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+};
+
+// Mass over height squared, in kg and metres.
+export const bmiOf = (weightKg, heightCm) => {
+  const w = Number(weightKg);
+  const h = Number(heightCm) / 100;
+  if (!(w > 0) || !(h > 0)) return null;
+  const bmi = w / (h * h);
+  return Number.isFinite(bmi) ? bmi : null;
+};
+
+// WHO Technical Report Series 894 (2000), Table 2.1, "Classification of adults
+// according to BMI" — transcribed from the report itself, not from a secondary
+// reproduction of it. `to` is the value the band stops at, exclusive; `risk` is
+// WHO's own risk-of-comorbidities grading, which is what lets each band say
+// something different without anyone inventing advice to fill the space.
+//
+// WHO's own labels, WHO's own two-decimal ranges. "Normal range", not "normal
+// weight". "Preobese" is WHO's name for the 25.00-29.99 slice, nested under an
+// "Overweight: >=25.00" heading that carries no risk grading of its own.
+//
+// No training guidance lives here. The lifter asked for the classification and
+// not for a coach, and an app that mixes the two leaves you unable to tell
+// which half you can look up.
+export const BMI_SOURCE = 'WHO Technical Report Series 894, Table 2.1 (2000)';
+
+export const BMI_BANDS = [
+  {
+    label: 'Underweight',
+    short: 'Under',
+    from: 0,
+    to: 18.5,
+    tone: 'amber',
+    risk: 'Low — but WHO adds: risk of other clinical problems increased.',
+    range: 'Below 18.50.',
+  },
+  {
+    label: 'Normal range',
+    short: 'Normal',
+    from: 18.5,
+    to: 25,
+    tone: 'mint',
+    risk: 'Average.',
+    range: '18.50 to 24.99.',
+  },
+  {
+    label: 'Overweight',
+    short: 'Over',
+    from: 25,
+    to: 30,
+    tone: 'amber',
+    risk: 'Increased.',
+    range: '25.00 to 29.99, which WHO labels preobese, under overweight at 25.00 or more.',
+  },
+  {
+    label: 'Obese class I',
+    short: 'Ob I',
+    from: 30,
+    to: 35,
+    tone: 'danger',
+    risk: 'Moderate.',
+    range: '30.00 to 34.99.',
+  },
+  {
+    label: 'Obese class II',
+    short: 'Ob II',
+    from: 35,
+    to: 40,
+    tone: 'danger',
+    risk: 'Severe.',
+    range: '35.00 to 39.99. WHO adds this subdivision because management options differ above 35.',
+  },
+  {
+    label: 'Obese class III',
+    short: 'Ob III',
+    from: 40,
+    to: Infinity,
+    tone: 'danger',
+    risk: 'Very severe.',
+    range: '40.00 or more.',
+  },
+];
+
+// The footnote to Table 2.1, plus the sentence from section 2.3.2 that answers
+// the question a lifter actually has. WHO's words, because a paraphrase of a
+// standard is no longer the standard.
+export const BMI_CAVEAT =
+  'These BMI values are age-independent and the same for both sexes. BMI does not distinguish ' +
+  'between weight associated with muscle and weight associated with fat, and may not correspond ' +
+  'to the same degree of fatness in different populations. The table shows a simplistic ' +
+  'relationship between BMI and the risk of comorbidity, which can be affected by a range of ' +
+  'factors, including the nature of the diet, ethnic group and activity level. The risks ' +
+  'associated with increasing BMI are continuous and graded and begin at a BMI above 25.';
+
+export const bandOf = (bmi) =>
+  bmi === null || bmi === undefined ? null : BMI_BANDS.find((b) => bmi < b.to) || null;
+
+// The weight that would put this height at the top of the normal band, which
+// is the only actionable thing BMI has to say.
+export const healthyRange = (heightCm) => {
+  const h = Number(heightCm) / 100;
+  if (!(h > 0)) return null;
+  return { low: 18.5 * h * h, high: 24.9 * h * h };
+};
+
+// A photo travels inside the published page, alongside the log. A phone
+// camera's 4MB JPEG would dwarf it, so the file never reaches storage as
+// itself: it is cropped square, drawn at the largest size it is ever displayed,
+// and re-encoded. That lands around 20KB.
+export const AVATAR_PX = 256;
+
+export function readAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !String(file.type || '').startsWith('image/')) {
+      reject(new Error('not an image'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        if (!side) throw new Error('empty image');
+        const canvas = document.createElement('canvas');
+        canvas.width = AVATAR_PX;
+        canvas.height = AVATAR_PX;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(
+          img,
+          (img.naturalWidth - side) / 2,
+          (img.naturalHeight - side) / 2,
+          side,
+          side,
+          0,
+          0,
+          AVATAR_PX,
+          AVATAR_PX
+        );
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('could not read image'));
+    };
+    img.src = url;
+  });
+}
+
+// What stands in for the photo until there is one.
+export const initialsOf = (name) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+};
+
+// The weight log predates the profile: it came from the Bodyweight tab, which
+// has been scrapped. Those entries carry a free-text note the app no longer
+// offers, and a date from whenever that tab was last opened — which reads on
+// Stats as a stale measurement rather than what the lifter weighs now.
+//
+// Keep the number, because it is real, and file it as today's. Once: the
+// migrated entry has no `notes` key, so nothing about it is legacy any more and
+// the next run leaves it alone. Without that marker this would re-date the
+// weight every morning, which is a different kind of lie.
+export function migrateWeights(entries, today) {
+  const list = Array.isArray(entries) ? entries : [];
+  const legacy = list.filter((e) => e && Object.prototype.hasOwnProperty.call(e, 'notes'));
+  if (!legacy.length) return { weights: list, changed: false };
+  const newest = legacy.slice().sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const weights = [
+    ...list.filter((e) => !legacy.includes(e) && e.date !== today),
+    { date: today, weight: String(newest.weight) },
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+  return { weights, changed: true };
+}

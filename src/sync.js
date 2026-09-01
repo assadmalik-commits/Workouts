@@ -35,7 +35,14 @@ export function hasEmbeddedData(state) {
   if (!state) return false;
   const logs = state['workout-logs'];
   const bw = state['bodyweight-logs'];
-  return Boolean((logs && Object.keys(logs).length) || (bw && bw.length));
+  const profile = state.profile;
+  return Boolean(
+    (logs && Object.keys(logs).length) ||
+      (bw && bw.length) ||
+      // A profile with nothing logged yet is still the lifter's own copy of the
+      // page. Ignoring it sends them back to an empty form on the next load.
+      (profile && Object.values(profile).some((v) => v))
+  );
 }
 
 // Rebuild the whole document from the page's own static assets plus fresh

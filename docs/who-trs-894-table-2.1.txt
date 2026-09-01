@@ -1,0 +1,29 @@
+WHO Technical Report Series 894 (2000), Table 2.1
+"Classification of adults according to BMI"
+
+Classification    BMI            Risk of comorbidities
+Underweight       <18.50         Low (but risk of other clinical problems increased)
+Normal range      18.50-24.99    Average
+Overweight:       >=25.00
+  Preobese        25.00-29.99    Increased
+  Obese class I   30.00-34.99    Moderate
+  Obese class II  35.00-39.99    Severe
+  Obese class III >=40.00        Very severe
+
+Footnote a: These BMI values are age-independent and the same for both sexes.
+However, BMI may not correspond to the same degree of fatness in different
+populations due, in part, to differences in body proportions. The table shows a
+simplistic relationship between BMI and the risk of comorbidity, which can be
+affected by a range of factors, including the nature of the diet, ethnic group
+and activity level. The risks associated with increasing BMI are continuous and
+graded and begin at a BMI above 25. The interpretation of BMI gradings in
+relation to risk may differ for different populations. Both BMI and a measure of
+fat distribution (waist circumference or waist:hip ratio (WHR)) are important in
+calculating the risk of obesity comorbidities.
+
+Sec 2.3: "includes an additional subdivision at BMI 35.0-39.9 in recognition of
+the fact that management options for dealing with obesity differ above a BMI
+of 35. The WHO classification is based primarily on the association between BMI
+and mortality."
+Sec 2.3.2: "BMI does not distinguish between weight associated with muscle and
+weight associated with fat."

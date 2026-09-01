@@ -8,7 +8,10 @@ has already been tried and rejected.
 ## Where things are
 
 - `src/plan.js` — the programme. One place to edit the routine.
-- `src/WorkoutTracker.jsx` — the whole app.
+- `src/WorkoutTracker.jsx` — the whole app: four sections behind a bottom bar,
+  of which Home is the only one that logs anything.
+- `src/profile.js` — the lifter, and what is worked out from them: BMI, the WHO
+  bands, age from date of birth, the photo downscaler.
 - `src/sync.js` — durable storage: the published page rewrites itself with the
   log embedded in it.
 - `src/storage.js` — localStorage behind an async interface.
@@ -50,6 +53,20 @@ emulation and scales down, hiding every wrapping and overflow problem.
 **Test in `Asia/Dubai`.** Three separate temporal-dead-zone crashes rendered
 fine in UTC and white-screened at GMT+4, because a date comparison stopped
 short-circuiting. Date logic must be exercised in the lifter's timezone.
+
+**Anything the lifter adds travels inside the published page.** A photo, or
+anything else with a file behind it, is re-encoded to something small before it
+reaches storage — the profile picture is cropped square and drawn at 256px,
+which lands near 20KB. An untouched camera JPEG would be twenty times the log
+it rides with.
+
+**One health standard, named on screen, and nothing alongside it.** BMI follows
+the WHO adult bands, including WHO's own risk-of-comorbidities grading and
+WHO's own caveats, and the page says so. Alternatives exist and are argued in
+the design notes; mixing them gives a reading nobody can look up. Do not add
+training advice to that screen — it was tried and rejected. An app that mixes a
+standard with its own coaching leaves the lifter unable to tell which half they
+can check.
 
 **Log entries are keyed by exercise name.** Renaming an exercise strands its
 sets unless `RENAMED` carries them across. See the design notes: stable IDs are

@@ -47,6 +47,18 @@
   --color-danger-dim: #fbe3e0;
 }
 
+/* The section bar floats over the page rather than walling off its foot, so it
+   needs a ground of its own: enough to carry its labels, little enough to show
+   what is passing behind. The two themes need different amounts — dark text on
+   a light page ghosts through far more than light text on a dark one, at the
+   same opacity. */
+:root {
+  --bar-bg: rgb(25 32 44 / 0.78);
+}
+:root[data-app-theme='light'] {
+  --bar-bg: rgb(255 255 255 / 0.92);
+}
+
 html {
   background: var(--color-night);
   color-scheme: dark;
@@ -86,6 +98,18 @@ input[type='number']::-webkit-inner-spin-button {
 input[type='number'] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* The section bar is for tapping. A long press on a phone otherwise starts a
+   text selection and raises the callout menu over the thing being pressed,
+   which is neither useful nor recoverable mid-set. Tailwind's select-none
+   covers the selection; the callout and the grey tap flash need saying here. */
+.app-bar,
+.app-bar * {
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Digits that line up wherever they're compared. */
