@@ -54,9 +54,13 @@
    same opacity. */
 :root {
   --bar-bg: rgb(25 32 44 / 0.78);
+  /* The capsule behind the section you are on. Translucent, so it lifts or
+     dims whatever the bar is already showing rather than painting over it. */
+  --bar-active: rgb(255 255 255 / 0.1);
 }
 :root[data-app-theme='light'] {
   --bar-bg: rgb(255 255 255 / 0.92);
+  --bar-active: rgb(12 16 23 / 0.07);
 }
 
 html {

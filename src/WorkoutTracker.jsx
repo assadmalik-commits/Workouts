@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.5';
+const APP_VERSION = '7.6';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -2127,12 +2127,18 @@ export default function WorkoutTracker() {
                   setView(key);
                 }}
                 aria-current={on ? 'page' : undefined}
-                className={`flex-1 flex flex-col items-center gap-0.5 pt-2 pb-1.5 ${
-                  on ? 'text-mint' : 'text-dim'
-                }`}
+                className="flex-1 flex justify-center py-1 px-1"
               >
-                <Icon size={20} strokeWidth={on ? 2.4 : 2} />
-                <span className="text-[11px] font-bold tracking-wide">{label}</span>
+                {/* The capsule is what says which section you are on. The whole
+                    cell stays tappable; only this part is marked. */}
+                <span
+                  className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 transition ${
+                    on ? 'bg-[var(--bar-active)] text-mint' : 'text-dim'
+                  }`}
+                >
+                  <Icon size={20} strokeWidth={on ? 2.4 : 2} />
+                  <span className="text-[11px] font-bold tracking-wide">{label}</span>
+                </span>
               </button>
             );
           })}
