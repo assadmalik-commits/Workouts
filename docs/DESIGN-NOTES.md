@@ -37,8 +37,19 @@ the log embedded in it.
 Four sections, reached from a bar at the foot of the screen: **Home** is where
 the app runs and the only one that logs anything; **Streak**, **Stats** and
 **Profile** are read, not worked in. That is why the session's Save button
-belongs to Home alone, and why it sits stacked above the bar rather than
-competing with it for the same strip of a 440px phone.
+belongs to Home alone, and why it sits above the bar rather than competing with
+it for the same strip of a 440px phone.
+
+The bar floats: rounded, translucent, blurred, with the session scrolling
+behind it and the gutters passing taps through. The first version was an opaque
+strip with a filled green Save slab on top of it, and between them they walled
+off a seventh of the screen — v7.0 was rejected on exactly that. Two changes
+fixed it. The Save button only fills when something has not reached the
+published page yet, and otherwise says *Saved* quietly; it stays pressable
+either way, because being able to press it is the whole point of having it. And
+the bar's ground is a variable rather than a token, because the two themes need
+different amounts of it: dark text on a light page ghosts through far more than
+light text on a dark one at the same opacity.
 
 ## The streak counts days, not weeks
 
@@ -93,6 +104,13 @@ The photo is re-encoded before it is stored: cropped square, drawn at 256px —
 the largest it is ever displayed — and saved as JPEG, which lands around 20KB.
 It has to be, because it travels inside the published page alongside the log. A
 phone camera's 4MB original would dwarf the thing it is attached to.
+
+The weight log that came from the scrapped Bodyweight tab is migrated once: its
+newest reading is re-dated to today and its free-text note dropped, because on
+Stats an old date reads as a stale measurement rather than as what the lifter
+weighs. The migrated entry has no `notes` key, which is what stops it happening
+again — without that marker it would re-date the weight every morning, which is
+a worse lie than the stale date it replaced.
 
 ## Next: stable exercise IDs
 

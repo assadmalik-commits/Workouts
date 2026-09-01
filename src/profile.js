@@ -112,3 +112,24 @@ export const initialsOf = (name) => {
   if (!parts.length) return '';
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
 };
+
+// The weight log predates the profile: it came from the Bodyweight tab, which
+// has been scrapped. Those entries carry a free-text note the app no longer
+// offers, and a date from whenever that tab was last opened — which reads on
+// Stats as a stale measurement rather than what the lifter weighs now.
+//
+// Keep the number, because it is real, and file it as today's. Once: the
+// migrated entry has no `notes` key, so nothing about it is legacy any more and
+// the next run leaves it alone. Without that marker this would re-date the
+// weight every morning, which is a different kind of lie.
+export function migrateWeights(entries, today) {
+  const list = Array.isArray(entries) ? entries : [];
+  const legacy = list.filter((e) => e && Object.prototype.hasOwnProperty.call(e, 'notes'));
+  if (!legacy.length) return { weights: list, changed: false };
+  const newest = legacy.slice().sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const weights = [
+    ...list.filter((e) => !legacy.includes(e) && e.date !== today),
+    { date: today, weight: String(newest.weight) },
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
+  return { weights, changed: true };
+}

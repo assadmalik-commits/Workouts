@@ -47,6 +47,18 @@
   --color-danger-dim: #fbe3e0;
 }
 
+/* The section bar floats over the page rather than walling off its foot, so it
+   needs a ground of its own: enough to carry its labels, little enough to show
+   what is passing behind. The two themes need different amounts — dark text on
+   a light page ghosts through far more than light text on a dark one, at the
+   same opacity. */
+:root {
+  --bar-bg: rgb(25 32 44 / 0.78);
+}
+:root[data-app-theme='light'] {
+  --bar-bg: rgb(255 255 255 / 0.92);
+}
+
 html {
   background: var(--color-night);
   color-scheme: dark;

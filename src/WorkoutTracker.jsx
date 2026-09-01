@@ -7,12 +7,12 @@ import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
-  SEXES, EMPTY_PROFILE, normaliseProfile, ageOn, bmiOf, BMI_BANDS, bandOf, healthyRange,
-  readAvatar, initialsOf,
+  SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, bandOf,
+  healthyRange, readAvatar, initialsOf,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.0';
+const APP_VERSION = '7.1';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -366,6 +366,10 @@ export default function WorkoutTracker() {
   const [savedFlash, setSavedFlash] = useState(null);
   const [weightInput, setWeightInput] = useState('');
   const [profile, setProfile] = useState(EMPTY_PROFILE);
+  // Written down since the last publish. A ref alone cannot drive the button's
+  // appearance, and the button is the only thing that says whether the record
+  // has reached the page it lives in.
+  const [pending, setPending] = useState(false);
   const [photoError, setPhotoError] = useState(null);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
@@ -387,8 +391,9 @@ export default function WorkoutTracker() {
         p = await load('profile', null);
       }
       const { logs: migrated, changed } = migrate(stored);
+      const { weights, changed: weightsChanged } = migrateWeights(b, localDateStr());
       setLogs(migrated);
-      setBwLogs(b);
+      setBwLogs(weights);
       setProfile(normaliseProfile(p));
 
       const storedTheme = hasEmbeddedData(embedded)
@@ -398,6 +403,14 @@ export default function WorkoutTracker() {
 
       setReady(true);
       if (changed) save('workout-logs', migrated);
+      if (weightsChanged) {
+        save('bodyweight-logs', weights);
+        // The migrated log has to reach the published page too, but not by
+        // publishing on load — that would reload every open view. Mark it and
+        // let the next save or the page going away carry it.
+        unpublishedRef.current = true;
+        setPending(true);
+      }
 
       // The capability resolves after the first render, or not at all.
       const publish = await getPublisher();
@@ -759,6 +772,7 @@ export default function WorkoutTracker() {
     const id = setTimeout(() => {
       savedRef.current = snapshot;
       unpublishedRef.current = true;
+      setPending(true);
       save('workout-logs', JSON.parse(snapshot));
     }, 500);
     return () => clearTimeout(id);
@@ -778,6 +792,7 @@ export default function WorkoutTracker() {
     const id = setTimeout(() => {
       savedProfileRef.current = snapshot;
       unpublishedRef.current = true;
+      setPending(true);
       save('profile', JSON.parse(snapshot));
     }, 500);
     return () => clearTimeout(id);
@@ -792,6 +807,7 @@ export default function WorkoutTracker() {
       save('workout-logs', record);
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
+      setPending(false);
       rememberPlace(placeRef.current);
       publishRef.current?.(record, bwRef.current, profileRef.current);
     };
@@ -810,6 +826,7 @@ export default function WorkoutTracker() {
     const record = persistable(logs);
     savedRef.current = JSON.stringify(record);
     unpublishedRef.current = false;
+    setPending(false);
     const ok = await save('workout-logs', record);
     rememberPlace(placeRef.current);
     const published = await publishAll(record, bwLogs);
@@ -841,6 +858,7 @@ export default function WorkoutTracker() {
     setBwLogs(nextBw);
     savedProfileRef.current = JSON.stringify(clean);
     unpublishedRef.current = false;
+    setPending(false);
     const okProfile = await save('profile', clean);
     const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
     rememberPlace(placeRef.current);
@@ -976,7 +994,7 @@ export default function WorkoutTracker() {
 
   return (
     <div
-      className={`min-h-screen bg-night text-fg font-sans ${showSave ? 'pb-44' : 'pb-28'}`}
+      className={`min-h-screen bg-night text-fg font-sans ${showSave ? 'pb-36' : 'pb-24'}`}
     >
       {view === 'home' ? (
         <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
@@ -2013,28 +2031,38 @@ export default function WorkoutTracker() {
         </div>
       )}
 
-      {/* One fixed stack at the bottom, so the Save button and the four
-          sections cannot overlap and the safe area is dealt with once. Save is
-          thumb-reachable because it is the action taken mid-set; it sits above
-          the bar rather than competing with it. */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 bg-night border-t border-line pb-[env(safe-area-inset-bottom)]">
+      {/* The bar floats rather than walling off the foot of the page: rounded,
+          translucent, blurred, with the session scrolling behind it. A solid
+          strip and a filled green slab took a seventh of a 440px screen and
+          read as chrome; this reads as something resting on the page. The
+          gutters around it pass taps through to whatever is underneath. */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none">
         {showSave && (
-          <div className="px-4 pt-3 pb-1">
-            <button
-              onClick={saveLogs}
-              className="w-full bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
-            >
-              {savedFlash === 'workout' ? (
-                <>
-                  <Check size={18} /> Saved
-                </>
-              ) : (
-                `Save ${tab} ${variant}`
-              )}
-            </button>
-          </div>
+          <button
+            onClick={saveLogs}
+            aria-label={`Save ${tab} ${variant}`}
+            className={`pointer-events-auto w-full mb-2 rounded-2xl py-2.5 text-sm font-bold flex items-center justify-center gap-1.5 shadow-lg transition ${
+              pending || savedFlash === 'workout'
+                ? 'bg-mint text-night'
+                : 'bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 text-dim'
+            }`}
+          >
+            {/* One control, two states. Typing is already the save, so a filled
+                button sitting there all session is loud about nothing; it fills
+                only when something has not reached the published page yet, and
+                otherwise says so quietly. It stays pressable either way — being
+                able to press it is the point of having it. The accessible name
+                does not change with the state. */}
+            {pending ? (
+              `Save ${tab} ${variant}`
+            ) : (
+              <>
+                <Check size={15} /> Saved
+              </>
+            )}
+          </button>
         )}
-        <nav className="flex">
+        <nav className="pointer-events-auto flex rounded-2xl bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 shadow-lg">
           {NAV.map(({ key, label, Icon }) => {
             const on = view === key;
             return (
@@ -2048,11 +2076,11 @@ export default function WorkoutTracker() {
                   setView(key);
                 }}
                 aria-current={on ? 'page' : undefined}
-                className={`flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 ${
+                className={`flex-1 flex flex-col items-center gap-0.5 pt-2 pb-1.5 ${
                   on ? 'text-mint' : 'text-dim'
                 }`}
               >
-                <Icon size={21} strokeWidth={on ? 2.4 : 2} />
+                <Icon size={20} strokeWidth={on ? 2.4 : 2} />
                 <span className="text-[11px] font-bold tracking-wide">{label}</span>
               </button>
             );
