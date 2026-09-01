@@ -29,12 +29,24 @@ export const ageOn = (dob, iso) => {
   return age >= 0 && age < 130 ? age : null;
 };
 
+// What counts as a person. A field can be capped at the top — a thumb cannot
+// type past it — but not at the bottom: 1 is a perfectly good keystroke on the
+// way to 173. So the floor lives here, where the number is used, and an
+// implausible pair produces no reading rather than a BMI of 690,000.
+export const PLAUSIBLE = { heightCm: [100, 250], weightKg: [25, 400] };
+
+const within = (value, [low, high]) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= low && n <= high;
+};
+
+export const plausibleHeight = (heightCm) => within(heightCm, PLAUSIBLE.heightCm);
+export const plausibleWeight = (weightKg) => within(weightKg, PLAUSIBLE.weightKg);
+
 // Mass over height squared, in kg and metres.
 export const bmiOf = (weightKg, heightCm) => {
-  const w = Number(weightKg);
-  const h = Number(heightCm) / 100;
-  if (!(w > 0) || !(h > 0)) return null;
-  const bmi = w / (h * h);
+  if (!plausibleHeight(heightCm) || !plausibleWeight(weightKg)) return null;
+  const bmi = Number(weightKg) / (Number(heightCm) / 100) ** 2;
   return Number.isFinite(bmi) ? bmi : null;
 };
 
@@ -127,8 +139,8 @@ export const bandOf = (bmi) =>
 // The weight that would put this height at the top of the normal band, which
 // is the only actionable thing BMI has to say.
 export const healthyRange = (heightCm) => {
+  if (!plausibleHeight(heightCm)) return null;
   const h = Number(heightCm) / 100;
-  if (!(h > 0)) return null;
   return { low: 18.5 * h * h, high: 24.9 * h * h };
 };
 
@@ -180,10 +192,16 @@ export function readAvatar(file) {
 }
 
 // What stands in for the photo until there is one.
+// By character, not by UTF-16 code unit. "Assad 💪" took the first half of the
+// emoji's surrogate pair and drew the replacement glyph in the header.
+const firstChar = (word) => Array.from(word)[0] || '';
+
 export const initialsOf = (name) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return '';
-  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+  const initials =
+    firstChar(parts[0]) + (parts.length > 1 ? firstChar(parts[parts.length - 1]) : '');
+  return initials.toUpperCase();
 };
 
 // The weight log predates the profile: it came from the Bodyweight tab, which

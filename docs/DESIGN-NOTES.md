@@ -170,10 +170,47 @@ that settles it: **no training or lifting guidance on this screen, WHO and
 nothing else.** An app that mixes a standard with its own coaching leaves you
 unable to tell which half you can look up.
 
+## What a field will take
+
+Swept at v7.9 by typing every value a thumb can produce into every box on every
+page, rather than by reasoning about the code. Seven readings on screen were
+wrong; none had been noticed in use.
+
+**A number field hands over what was typed, not what was meant.** `007`, `.5`
+and `00` all reach storage verbatim from an `<input type="number">`, and were
+rendered raw — putting `max 0.5kg` in a row summary above a `.5kg` pill, the
+same set written two ways. Numbers are now canonical in the record and rendered
+as numbers wherever they appear.
+
+**A ceiling belongs next to the minus sign the field already refuses.** A
+mistyped 999999 kg is a slip, not an entry. Weight stops at 1000 kg, reps at
+200, height at 250 cm, bodyweight at 400 kg — the keystroke simply does not
+take, exactly as it already did not for `-`.
+
+**A floor cannot live in the field**, because `1` is a good keystroke on the way
+to `173`. So it lives where the number is used: a height and weight that are not
+a person's produce no BMI at all, rather than 690,000. Stats says which number
+looks wrong, and no longer says "two numbers missing" when one is.
+
+**A refused value must not sit in the field as though it had been taken.** A `0`
+typed into the profile's weight was not saved — correctly — but stayed on
+screen, while Stats went on using the real weight. The field now snaps back to
+what is on record.
+
+**Initials are characters, not UTF-16 code units.** `Assad 💪` took the first
+half of the emoji's surrogate pair and drew the replacement glyph in the header.
+
+**"Finish it on the day it belongs to" has to open it for finishing.** The
+stranded-session hand-off landed on a read-only record card and asked for
+another tap. It now arrives with the session open, and leaving the day still
+closes it.
+
 ## A set is a weight and a rep count
 
 Either one alone is a row still being typed, not a lighter version of the same
-record. Accepting half of one put `1 set · max 20kg` on the screen for an
+record. **And zero reps is not a rep count** — `20kg × 0` was counting as a set
+and toward the session being trained. A weight of zero is different: that is how
+bodyweight work is written. Accepting half of one put `1 set · max 20kg` on the screen for an
 exercise nobody had finished writing down, and counted it toward the session
 being trained. A weight of **0** is a real weight — that is how bodyweight work
 is written — so the test is whether something was written, not whether it is
