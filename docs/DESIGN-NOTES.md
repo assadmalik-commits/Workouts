@@ -54,6 +54,17 @@ the bar's ground is a variable rather than a token, because the two themes need
 different amounts of it: dark text on a light page ghosts through far more than
 light text on a dark one at the same opacity.
 
+The blur belongs to the **whole foot**, not to the two pills inside it. With it
+on the pills alone, the 8px gap between them and the strip below the bar were
+clear windows onto the page: an exercise name scrolling past landed there
+razor-sharp between two frosted panels, which reads as a mistake rather than as
+glass. Raised in use with a screenshot; the fix is one class on the container,
+and the test that guards it fails with `none` when that class is removed.
+
+A gradient scrim over the same region was tried at the same time and dropped: it
+removed one faint card edge the blur had left, and cost a second thing to get
+right across two themes.
+
 The section you are on is marked by a **capsule behind it**, not by colour
 alone — the pattern iOS 26's Liquid Glass tab bar uses, and the one WhatsApp
 adopted along with it. The capsule is translucent like the bar itself, so it
