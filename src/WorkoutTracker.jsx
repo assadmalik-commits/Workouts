@@ -8,11 +8,11 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
-  BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf,
+  BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf, plausibleHeight, plausibleWeight,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.8';
+const APP_VERSION = '7.9';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -98,8 +98,21 @@ const streakFrom = (trained, today) => {
 
 // A number field accepts "-40" and "1e5" as readily as "40". A negative lift
 // is not a thing, and a negative volume in the week's total is worse.
-const cleanNumber = (value, allowDecimal) =>
-  (allowDecimal ? /^\d*\.?\d*$/ : /^\d*$/).test(value) ? value : null;
+//
+// A ceiling belongs here too, next to the minus sign it already refuses: a
+// mistyped 999999 kg is a slip, not an entry, and the app has no business
+// working out a BMI for a 999 cm adult. The keystroke simply does not take,
+// which is what already happens for "-".
+const cleanNumber = (value, allowDecimal, max) => {
+  if (!(allowDecimal ? /^\d*\.?\d*$/ : /^\d*$/).test(value)) return null;
+  if (max !== undefined && value !== '' && Number(value) > max) return null;
+  return value;
+};
+
+// What the fields will take. Generous enough never to argue with a real
+// session — the heaviest lift ever recorded is under 600kg — and tight enough
+// that a slipped thumb cannot produce nonsense.
+const MAX = { setWeight: 1000, reps: 200, heightCm: 250, bodyWeight: 400 };
 
 // An entry is a list of sets: [{ w, r }, ...]. One row per set, because sets
 // are not interchangeable — a ramp of 10, 12, 14, 16 recorded as four sets of
@@ -113,7 +126,10 @@ const setsOf = (entry) => (Array.isArray(entry?.sets) ? entry.sets : []);
 //
 // A weight of 0 is a real weight: that is how bodyweight work is written.
 const written = (v) => v !== '' && v !== null && v !== undefined;
-const setFilled = (set) => Boolean(set && written(set.w) && written(set.r));
+// And zero reps is not a rep count: nothing was lifted, so nothing was done.
+// A weight of zero is different — that is how bodyweight work is written.
+const setFilled = (set) =>
+  Boolean(set && written(set.w) && written(set.r) && Number(set.r) > 0);
 
 const isFilled = (entry) => setsOf(entry).some(setFilled);
 
@@ -128,10 +144,19 @@ const slotComplete = (slot, entries) => {
 
 // A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
 // push-ups. BW says that on its own; spelling out the kg carried is noise.
+// Shown as the number it is, not as the characters that were typed. "007" and
+// ".5" reach storage verbatim from a number field, and rendering them raw put
+// "max 0.5kg" in the row summary above a ".5kg" pill — the same set, written
+// two ways.
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? String(n) : String(v);
+};
+
 const formatWeight = (w) => {
   if (w === '' || w === undefined || w === null) return '-';
   if (Number(w) === 0) return 'BW';
-  return `${w}kg`;
+  return `${num(w)}kg`;
 };
 
 // The load an exercise is remembered by: its heaviest set. Total volume added
@@ -164,7 +189,7 @@ function SetList({ entry }) {
           key={i}
           className="bg-raised border border-line rounded-lg px-2 py-1 text-[13px] nums font-semibold"
         >
-          {formatWeight(set.w)} × {set.r || '-'}
+          {formatWeight(set.w)} × {set.r === '' || set.r == null ? '-' : num(set.r)}
         </span>
       ))}
     </div>
@@ -218,7 +243,10 @@ const persistable = (logs) => {
     for (const [slot, entries] of Object.entries(slots || {})) {
       const kept = {};
       for (const [name, entry] of Object.entries(entries || {})) {
-        const sets = setsOf(entry).filter(setFilled);
+        // Canonical in the record, whatever the keypad produced.
+        const sets = setsOf(entry)
+          .filter(setFilled)
+          .map((set) => ({ w: num(set.w), r: num(set.r) }));
         if (sets.length) kept[name] = { sets };
       }
       if (Object.keys(kept).length) keptSlots[slot] = kept;
@@ -592,14 +620,22 @@ export default function WorkoutTracker() {
     return ROTATION.find((r) => Object.values(slots[r.slot] || {}).some(isFilled)) || null;
   };
 
-  const goToDate = (picked) => {
+  // Arriving at a date with the record already open for writing. The effect
+  // that clears overrides owns them, so this leaves it a note rather than
+  // setting one the same render would wipe.
+  const openOnArrivalRef = useRef(null);
+
+  const goToDate = (picked, openForWriting = false) => {
     // A session cannot have been trained on a day that hasn't happened.
     if (!picked || picked > today) return;
+    const trained = sessionOn(picked);
+    if (openForWriting) {
+      openOnArrivalRef.current = { date: picked, slot: trained ? trained.slot : slot };
+    }
     setDate(picked);
     setPinned(true);
     setRestPeek(false);
     setOpenEx(null);
-    const trained = sessionOn(picked);
     if (trained) {
       setTab(trained.day);
       setVariant(trained.variant);
@@ -729,7 +765,7 @@ export default function WorkoutTracker() {
   };
 
   const updateSet = (exName, index, field, value) => {
-    const clean = cleanNumber(value, field === 'w');
+    const clean = cleanNumber(value, field === 'w', field === 'w' ? MAX.setWeight : MAX.reps);
     if (clean === null) return;
     const sets = setsOf(getEntry(exName)).map((set, i) =>
       i === index ? { ...set, [field]: clean } : set
@@ -928,6 +964,11 @@ export default function WorkoutTracker() {
     }
     setProfile(clean);
     setBwLogs(nextBw);
+    // Show what is on record, not what was refused. A 0 typed into the weight
+    // field is not a weight, so it is not saved — and leaving it on screen said
+    // it had been, while Stats went on using the real one.
+    const onRecord = nextBw.find((e) => e.date === today) || nextBw[0];
+    setWeightInput(onRecord ? String(onRecord.weight) : '');
     savedProfileRef.current = JSON.stringify(clean);
     unpublishedRef.current = false;
     setPending(false);
@@ -1014,7 +1055,9 @@ export default function WorkoutTracker() {
   // save appeared to close it — because saving republishes and the reload took
   // the state with it.
   useEffect(() => {
-    setOverrides({});
+    const wanted = openOnArrivalRef.current;
+    openOnArrivalRef.current = null;
+    setOverrides(wanted && wanted.date === date ? { [`${wanted.slot}@${date}`]: true } : {});
   }, [date]);
 
   // The weight on the profile is a current weight, not a blank form to fill in
@@ -1073,6 +1116,29 @@ export default function WorkoutTracker() {
   const toneBg = { mint: 'bg-mint', amber: 'bg-amber', danger: 'bg-danger' };
   const toneText = { mint: 'text-mint', amber: 'text-amber', danger: 'text-danger' };
   const toneFill = { mint: 'bg-mint-dim', amber: 'bg-amber-dim', danger: 'bg-danger-dim' };
+
+  // Why there is no reading. Missing and implausible are different problems and
+  // "two numbers missing" was said for both — including when only one was.
+  const statsGap = (() => {
+    const missing = [];
+    if (!profile.heightCm) missing.push('height');
+    if (!latestWeight) missing.push('weight');
+    if (missing.length) {
+      return {
+        title: missing.length > 1 ? 'Two numbers missing' : 'One number missing',
+        body: `BMI needs your ${missing.join(' and your ')}. ${
+          missing.length > 1 ? 'Both live' : 'It lives'
+        } on the profile.`,
+      };
+    }
+    const wrong = [];
+    if (!plausibleHeight(profile.heightCm)) wrong.push(`${num(profile.heightCm)} cm`);
+    if (!plausibleWeight(latestWeight.weight)) wrong.push(`${num(latestWeight.weight)} kg`);
+    return {
+      title: 'That does not look right',
+      body: `There is no BMI to give for ${wrong.join(' and ')}. Worth checking on the profile.`,
+    };
+  })();
 
   return (
     <div
@@ -1385,7 +1451,10 @@ export default function WorkoutTracker() {
                 )}
                 {stranded ? (
                   <button
-                    onClick={() => goToDate(begunOn)}
+                    // The card above says to finish it on the day it belongs
+                    // to. Landing on a read-only record and asking for another
+                    // tap is not that.
+                    onClick={() => goToDate(begunOn, true)}
                     className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
                   >
                     Go to {prettyDate(begunOn)}
@@ -1838,12 +1907,10 @@ export default function WorkoutTracker() {
                 <Activity size={24} />
               </div>
               <div className="font-display text-2xl font-bold uppercase tracking-wide mt-4">
-                Two numbers missing
+                {statsGap.title}
               </div>
               <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
-                BMI needs your {!profile.heightCm ? 'height' : ''}
-                {!profile.heightCm && !latestWeight ? ' and your ' : ''}
-                {!latestWeight ? 'weight' : ''}. Both live on the profile.
+                {statsGap.body}
               </div>
               <button
                 onClick={() => setView('profile')}
@@ -2079,7 +2146,7 @@ export default function WorkoutTracker() {
               value={profile.heightCm}
               placeholder="178"
               onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true);
+                const clean = cleanNumber(e.target.value, true, MAX.heightCm);
                 if (clean !== null) setProfile((p) => ({ ...p, heightCm: clean }));
               }}
               className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
@@ -2095,7 +2162,7 @@ export default function WorkoutTracker() {
               value={weightInput}
               placeholder="69"
               onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true);
+                const clean = cleanNumber(e.target.value, true, MAX.bodyWeight);
                 if (clean !== null) setWeightInput(clean);
               }}
               className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
