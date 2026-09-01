@@ -13,7 +13,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.1';
+const APP_VERSION = '8.2';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -1364,7 +1364,7 @@ export default function WorkoutTracker() {
 
   return (
     <div
-      className={`min-h-screen bg-night text-fg font-sans ${showSave ? 'pb-36' : 'pb-24'}`}
+      className={`min-h-screen bg-night text-fg font-sans ${showSave ? 'pb-40' : 'pb-28'}`}
     >
       {view === 'home' ? (
         <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
@@ -2442,7 +2442,7 @@ export default function WorkoutTracker() {
           below the bar were clear windows onto the page: an exercise name
           scrolling past landed there razor-sharp between two frosted panels,
           which reads as a mistake rather than as glass. */}
-      <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
+      <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
         {showSave && (
           <button
             onClick={saveLogs}

@@ -119,6 +119,15 @@ input[type='number'] {
 /* The capsule travels between sections rather than blinking from one to the
    next. Transform and width, both cheap to animate; the first placement is
    where it already is, so it does not slide in from the left on load. */
+/* The bar is lifted clear of the iPhone home indicator. A published page runs
+   in a cross-origin iframe, where env(safe-area-inset-bottom) reports 0, so
+   the floor in the bar's padding is what actually applies on the phone — the
+   inset never does. At 0.5rem the indicator was drawn across the bottom edge
+   of the nav and its swipe-up band was swallowing taps meant for the buttons.
+   Measured: 8px of clearance before, 24px after. If that floor is ever
+   lowered, measure on a device with an indicator, not in a desktop viewport
+   where nothing is drawn there. */
+
 .app-capsule {
   top: 0;
   left: 0;
