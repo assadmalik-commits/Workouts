@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.6';
+const APP_VERSION = '7.7';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -2081,8 +2081,14 @@ export default function WorkoutTracker() {
           translucent, blurred, with the session scrolling behind it. A solid
           strip and a filled green slab took a seventh of a 440px screen and
           read as chrome; this reads as something resting on the page. The
-          gutters around it pass taps through to whatever is underneath. */}
-      <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none">
+          gutters around it pass taps through to whatever is underneath.
+
+          The blur belongs to the whole foot, not only to the two pills inside
+          it. With it on the pills alone, the 8px gap between them and the strip
+          below the bar were clear windows onto the page: an exercise name
+          scrolling past landed there razor-sharp between two frosted panels,
+          which reads as a mistake rather than as glass. */}
+      <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
         {showSave && (
           <button
             onClick={saveLogs}
