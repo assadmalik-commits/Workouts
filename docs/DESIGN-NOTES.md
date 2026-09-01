@@ -488,3 +488,45 @@ programme, the streak rule or the capsule moved.
 The self-publish path stays until the store has been proven in the lifter's own
 hands. Once it has, `sync.js` and the embedded block can go, and the page
 becomes only an app. Stable exercise IDs are still the next piece of real work.
+
+## Where this is going
+
+Decided September 2026. For at least this week the app stays what it has always
+been: one lifter's log, used daily. After that it starts becoming something a
+stranger could open, with the App Store and Play Store as the eventual target.
+
+That ordering matters for what gets built next, because the two are not the
+same app:
+
+1. **Stable exercise IDs.** Already the next piece of work, and the vision makes
+   it blocking rather than tidy. Log entries are keyed by exercise name, so a
+   user who renames or builds their own exercise strands their sets. Nothing
+   multi-user can be built on top of that. It is also invisible to the lifter
+   and gets more expensive with every session logged, so it is cheap now and
+   never cheaper again.
+2. **The programme becomes data, not code.** `plan.js` is this lifter's own
+   six-day split, written in source. A stranger needs their own.
+3. **Accounts, and a second person's data.** Not before the two above.
+
+### What survives the move and what does not
+
+`db.js`, `sync.js` and `storage.js` — 444 lines of 3,440, about 13% — are
+Claude-artifact-specific. `claude.use()` does not exist on a phone, so that
+layer is replaced by on-device storage in a wrapped build (Capacitor keeps this
+codebase; React Native would not). Everything else — the programme, the WHO
+screen, the streak rule, the whole interface — is ordinary React and travels.
+
+This is the argument for v8.1 beyond the reload it fixed: the record is now a
+set of documents with a defined shape rather than a page that rewrites itself,
+and a defined shape is portable. The old model was not.
+
+The WHO discipline pays off here too. A health screen that follows one named
+standard, cites it, and mixes in no coaching of its own is far easier to defend
+at App Store review than one that gives advice it cannot source.
+
+### This week is also v8.1's soak test
+
+The self-publish fallback in `sync.js` stays until the store has been proven in
+the lifter's own hands. A week of real sessions is that proof. If saving never
+reloads the app and nothing goes missing, the fallback and the embedded block
+can go and the page becomes only an app.
