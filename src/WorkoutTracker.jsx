@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
   Home, Flame, Activity, User, Camera,
@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.9';
+const APP_VERSION = '8.0';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -1041,6 +1041,48 @@ export default function WorkoutTracker() {
   // Reset on the way back into Home, not on boot — a publish's reload must
   // still put the lifter back where they were, and that is not a section
   // change.
+  // The capsule is one element that moves, not one per section appearing and
+  // disappearing. Its position and width are measured from whichever cell is
+  // current, because the capsule hugs its label and "Profile" is wider than
+  // "Home" — so this cannot be done with a quarter-width slide.
+  const navRef = useRef(null);
+  const [capsule, setCapsule] = useState(null);
+  const settledRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return undefined;
+    const measure = () => {
+      const marked = nav.querySelector('[aria-current="page"] > span');
+      if (!marked) return;
+      const outer = nav.getBoundingClientRect();
+      const box = marked.getBoundingClientRect();
+      // Offsets are from the padding box, which is where an absolutely
+      // positioned child starts; getBoundingClientRect gives the border box,
+      // and the bar has a border.
+      setCapsule({
+        left: box.left - outer.left - nav.clientLeft,
+        top: box.top - outer.top - nav.clientTop,
+        width: box.width,
+        height: box.height,
+      });
+    };
+    measure();
+    // A rotation or a font settling changes the widths under it.
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    return () => observer.disconnect();
+    // `ready` matters: until the log has loaded the app renders a spinner and
+    // there is no bar to measure, and the view has not changed to prompt a
+    // second look.
+  }, [view, ready]);
+
+  // The first placement is where the capsule already is, not somewhere it
+  // slides in from.
+  useEffect(() => {
+    if (capsule) settledRef.current = true;
+  }, [capsule]);
+
   const cameFromRef = useRef(view);
   useEffect(() => {
     const previous = cameFromRef.current;
@@ -2226,7 +2268,29 @@ export default function WorkoutTracker() {
             )}
           </button>
         )}
-        <nav className="pointer-events-auto flex rounded-2xl bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 shadow-lg">
+        <nav
+          ref={navRef}
+          className="app-nav pointer-events-auto relative flex rounded-2xl bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 shadow-lg"
+        >
+          {/* The capsule itself: one element, behind the buttons, that travels
+              to whichever section is current. */}
+          {capsule && (
+            <span
+              aria-hidden="true"
+              // The space before the interpolation is load-bearing: with `${`
+              // hard against the `]`, Tailwind's scanner does not see the
+              // candidate and never emits the class, leaving a capsule with no
+              // colour at all.
+              className={`app-capsule absolute rounded-xl bg-[var(--bar-active)] ${
+                settledRef.current ? 'app-capsule-moves' : ''
+              }`}
+              style={{
+                transform: `translate3d(${capsule.left}px, ${capsule.top}px, 0)`,
+                width: capsule.width,
+                height: capsule.height,
+              }}
+            />
+          )}
           {NAV.map(({ key, label, Icon }) => {
             const on = view === key;
             return (
@@ -2240,13 +2304,13 @@ export default function WorkoutTracker() {
                   setView(key);
                 }}
                 aria-current={on ? 'page' : undefined}
-                className="flex-1 flex justify-center py-1 px-1"
+                className="relative flex-1 flex justify-center py-1 px-1"
               >
-                {/* The capsule is what says which section you are on. The whole
-                    cell stays tappable; only this part is marked. */}
+                {/* The whole cell stays tappable; this is only what the capsule
+                    is measured against, and what carries the colour. */}
                 <span
-                  className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 transition ${
-                    on ? 'bg-[var(--bar-active)] text-mint' : 'text-dim'
+                  className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 transition-colors duration-200 ${
+                    on ? 'text-mint' : 'text-dim'
                   }`}
                 >
                   <Icon size={20} strokeWidth={on ? 2.4 : 2} />

@@ -116,6 +116,27 @@ input[type='number'] {
   user-select: none;
 }
 
+/* The capsule travels between sections rather than blinking from one to the
+   next. Transform and width, both cheap to animate; the first placement is
+   where it already is, so it does not slide in from the left on load. */
+.app-capsule {
+  top: 0;
+  left: 0;
+  will-change: transform, width;
+}
+.app-capsule-moves {
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Movement is a preference, and some people have turned it off. */
+@media (prefers-reduced-motion: reduce) {
+  .app-capsule-moves {
+    transition: none;
+  }
+}
+
 /* Digits that line up wherever they're compared. */
 .nums {
   font-variant-numeric: tabular-nums;

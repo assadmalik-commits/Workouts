@@ -74,6 +74,25 @@ cell stays tappable; only the capsule is marked. It cost six pixels of height,
 which came back out of the padding — the foot stays under a seventh of the
 screen, and there is a test that says so.
 
+The capsule is **one element that travels**, not one per section blinking in and
+out. Its position and width are measured from whichever cell is current, because
+it hugs its label and "Profile" is wider than "Home" — a quarter-width slide
+would fit none of them. Transform and width animate over 260ms, and
+`prefers-reduced-motion` turns that off.
+
+Two things it taught, both worth keeping:
+
+- The measuring effect has to depend on `ready`, not only on the view. Until the
+  log loads the app renders a spinner and there is no bar to measure, so the
+  capsule was not placed until the first tap.
+- An arbitrary Tailwind class with a template interpolation hard against its
+  closing bracket is invisible to the scanner. The class was never emitted and
+  the capsule had no colour at all. Leave a space before the interpolation.
+
+The second got through because the assertion guarding it read `alpha < 0.5`,
+which a fully transparent capsule satisfies. It now reads `alpha > 0 && alpha <
+0.5`. An assertion that passes on the thing being absent is not an assertion.
+
 The other half of that system component — the bar shrinking on scroll down and
 returning on scroll up — is deliberately not built. It is the more interesting
 behaviour and the riskier one: Safari's rubber-band scrolling and its
