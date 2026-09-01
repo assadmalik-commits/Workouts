@@ -414,3 +414,77 @@ of editing a session.
 The lesson was about how it arrived: the question was "what do I do with this
 number?", which wanted an explanation, and it was answered with a feature.
 Clarify before building.
+
+## v8.1 — the log moved out of the page
+
+Until now the log and the app were the same file. Saving meant republishing,
+and a republish reloads every open view, so the app was forbidden from saving
+on a timer: a mid-session publish threw the lifter back to today with
+everything closed. Shipping any code change meant reading the live page,
+lifting the log out of `#log-data`, and pasting it into the new build; forget
+that step and the publish is refused, which is the only reason nothing was ever
+lost.
+
+The `db` capability holds documents beside the page instead of inside it. The
+log is now `sessions/<date>`, one document per training day, plus `meta/`
+documents for the profile, the photo, the weights and the theme. What that buys:
+
+- **Saving no longer reloads anything.** This is the real prize, not the
+  workflow. `publishAll` returns early when a store answered.
+- **Shipping code cannot touch the log.** It is not in the file any more.
+- **A day's write is a day's write.** `changedKeys` compares before and after,
+  so typing into today never rewrites August.
+
+### Why one document per day
+
+A single log document would be rewritten in full on every keystroke's debounce
+and would grow without bound against the 256KiB document limit. Per-day
+documents cost about 312 a year against a 5,000-document ceiling — sixteen
+years — and make a write proportional to what changed.
+
+The photo has a document of its own. It is twenty times the rest of the profile
+put together and changes about never, so splitting it keeps every profile write
+small and isolates the one body that could ever approach the size limit.
+
+### The pending set
+
+`db-pending` names the keys this device has written down and the store has not
+taken. It is the whole of the offline story: on the next load those keys beat
+the store's copy, and everything else loses to it. Without it, training in a
+basement and coming back into signal would read the older day back over the
+session that was just done.
+
+Two things had to be got right, and the second was got wrong first:
+
+1. A day cleared on the device must not be resurrected from the store — so a
+   held key with nothing behind it deletes rather than merges.
+2. The local side of the merge cannot be built from the embedded block. The
+   page carries what it last published, and it now publishes almost never, so
+   the offline session exists only on the device. The first cut read the
+   embedded block, and the merge deleted the session it was meant to protect.
+   The test caught it before it shipped: breaking the guard again shows the
+   day's document going to `{}`.
+
+### What this costs
+
+While the log lived in the page, saving the page was a complete backup. Moving
+the data out takes that away, so the Profile screen now offers **Export log** —
+the whole record as one JSON file, sessions, weights, profile and photo, in the
+shape the app itself reads. That is not a nicety; it is the other half of the
+move, and it is why the `downloads` capability is declared.
+
+Declaring `db` also makes the artifact organization-internal: it can no longer
+be shared by public link. For a private log read by one person that costs
+nothing, but it is a door that closes.
+
+### Still true
+
+`sync.js` is untouched and still correct — it is what runs when there is no
+store, and its tests still pass unchanged. Nothing about the WHO screen, the
+programme, the streak rule or the capsule moved.
+
+### Not done
+
+The self-publish path stays until the store has been proven in the lifter's own
+hands. Once it has, `sync.js` and the embedded block can go, and the page
+becomes only an app. Stable exercise IDs are still the next piece of real work.

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
-  Home, Flame, Activity, User, Camera,
+  Home, Flame, Activity, User, Camera, Download,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
+import { getStore, getDownloader, changedKeys, mergeState, dateOfKey, KEY } from './db';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
@@ -12,7 +13,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.0';
+const APP_VERSION = '8.1';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -436,9 +437,17 @@ export default function WorkoutTracker() {
   // has reached the page it lives in.
   const [pending, setPending] = useState(false);
   const [photoError, setPhotoError] = useState(null);
+  const [exportState, setExportState] = useState(null);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
   const openedRef = useRef(false);
+  // The store, once it answers, and the keys this device has written down but
+  // has not yet got into it. That set is what lets a session trained out of
+  // signal beat the store's older copy of the same day on the next load.
+  const storeRef = useRef(null);
+  const pendingKeysRef = useRef(new Set());
+  const flushRef = useRef(null);
+  const [downloader, setDownloader] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -481,6 +490,74 @@ export default function WorkoutTracker() {
       const publish = await getPublisher();
       publisherRef.current = publish;
       setDurable(Boolean(publish) || storageIsDurable());
+      // Stored behind a thunk: passing a function to a setter makes React
+      // treat it as an updater and call it, which is not what this is.
+      getDownloader().then((offer) => setDownloader(() => offer));
+
+      // The store answers later still, and by now the app is on screen and
+      // working from the device copy. What the store holds is the record;
+      // what this device is still carrying — a session trained out of signal,
+      // a correction made out of range — is named in the pending set and
+      // outranks it.
+      pendingKeysRef.current = new Set(await load('db-pending', []));
+      const store = await getStore();
+      storeRef.current = store;
+      if (!store) return;
+      setDurable(true);
+
+      const local = {
+        'workout-logs': persistable(migrated),
+        'bodyweight-logs': weights,
+        profile: normaliseProfile(p),
+        theme: storedTheme === 'dark' || storedTheme === 'light' ? storedTheme : 'light',
+      };
+      // What the page carries is what it last published, and it now
+      // publishes almost never. A session trained out of signal was written to
+      // the device and nowhere else, so anything still held has to be read
+      // back from there or the merge below would drop it on the floor.
+      if (pendingKeysRef.current.size) {
+        const deviceLogs = await load('workout-logs', {});
+        const deviceProfile = await load('profile', null);
+        const deviceBw = await load('bodyweight-logs', []);
+        const deviceTheme = await load('theme', null);
+        for (const key of pendingKeysRef.current) {
+          const held = dateOfKey(key);
+          if (held !== null) {
+            if (deviceLogs[held]) local['workout-logs'][held] = deviceLogs[held];
+            else delete local['workout-logs'][held];
+          } else if (key === KEY.profile || key === KEY.photo) {
+            if (deviceProfile) local.profile = normaliseProfile(deviceProfile);
+          } else if (key === KEY.bodyweight) {
+            local['bodyweight-logs'] = deviceBw;
+          } else if (key === KEY.theme && (deviceTheme === 'dark' || deviceTheme === 'light')) {
+            local.theme = deviceTheme;
+          }
+        }
+      }
+
+      const read = await store.readAll();
+      if (!read.ok) return;
+
+      if (read.empty) {
+        // First run against an empty store: what the page is carrying moves
+        // into it, and the embedded block stops being the record and becomes
+        // a backup of it.
+        await flushRef.current?.(changedKeys({}, local), local);
+        return;
+      }
+
+      const merged = mergeState(local, read.state, pendingKeysRef.current);
+      setLogs(merged['workout-logs']);
+      setBwLogs(merged['bodyweight-logs']);
+      setProfile(normaliseProfile(merged.profile));
+      if (merged.theme === 'dark' || merged.theme === 'light') setTheme(merged.theme);
+      // A merge is not an edit. Without telling the debounced writers what is
+      // now on record they read it back as something the lifter typed and
+      // write the whole log again.
+      savedRef.current = JSON.stringify(persistable(merged['workout-logs']));
+      savedProfileRef.current = JSON.stringify(normaliseProfile(merged.profile));
+      // Whatever this device contributed to that merge still has to get up.
+      await flushRef.current?.(changedKeys(read.state, merged), merged);
     })();
   }, [load, save, setReady]);
 
@@ -825,6 +902,10 @@ export default function WorkoutTracker() {
   // one piece and letting the others default to the last render would drop
   // whichever the caller forgot.
   const publishAll = async (nextLogs, nextBw, nextProfile) => {
+    // Publishing is the fallback now. Once the store has answered the record
+    // is already durable beside the page, and republishing would reload every
+    // open view — the lifter's included — to change nothing.
+    if (storeRef.current) return true;
     const publish = publisherRef.current;
     if (!publish) return true;
     const res = await publish({
@@ -836,6 +917,38 @@ export default function WorkoutTracker() {
     return res.ok;
   };
   publishRef.current = publishAll;
+
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+
+  // A complete state for the store to write from. writeKeys only touches the
+  // keys it is handed, but it reads them all out of one object, so a caller
+  // that knows about one change need not assemble the rest.
+  const stateOf = (record, bw, prof, th) => ({
+    'workout-logs': record ?? persistable(logsRef.current),
+    'bodyweight-logs': bw ?? bwRef.current,
+    profile: prof ?? profileRef.current,
+    theme: th ?? themeRef.current,
+  });
+
+  // Write the named keys, holding each in the pending set until the store
+  // confirms it. A key that never confirms stays held, and the next load lets
+  // this device's copy win rather than reading an older day back over it.
+  const flushKeys = async (keys, state) => {
+    const store = storeRef.current;
+    if (!store || !keys?.length) return;
+    for (const k of keys) pendingKeysRef.current.add(k);
+    save('db-pending', [...pendingKeysRef.current]);
+    const { written } = await store.writeKeys(keys, state);
+    for (const k of written) pendingKeysRef.current.delete(k);
+    save('db-pending', [...pendingKeysRef.current]);
+    // The button says whether the record is filed, so it has to follow what
+    // the store actually took.
+    const outstanding = pendingKeysRef.current.size > 0;
+    unpublishedRef.current = outstanding;
+    setPending(outstanding);
+  };
+  flushRef.current = flushKeys;
 
   // Typing is the save: numbers reach the device as soon as they stop moving,
   // so a session cannot be lost by never pressing the button.
@@ -876,10 +989,19 @@ export default function WorkoutTracker() {
     // Opening and closing exercises moves state without changing the record.
     if (snapshot === savedRef.current) return;
     const id = setTimeout(() => {
+      const previous = savedRef.current;
       savedRef.current = snapshot;
       unpublishedRef.current = true;
       setPending(true);
-      save('workout-logs', JSON.parse(snapshot));
+      const record = JSON.parse(snapshot);
+      save('workout-logs', record);
+      // The store takes the day that changed on the same debounce as the
+      // device copy. This is the write that makes the record durable, and
+      // unlike a publish it moves nothing on screen.
+      flushKeys(
+        changedKeys({ 'workout-logs': JSON.parse(previous) }, { 'workout-logs': record }),
+        stateOf(record)
+      );
     }, 500);
     return () => clearTimeout(id);
   }, [logs, ready, save]);
@@ -896,10 +1018,16 @@ export default function WorkoutTracker() {
     }
     if (snapshot === savedProfileRef.current) return;
     const id = setTimeout(() => {
+      const previous = savedProfileRef.current;
       savedProfileRef.current = snapshot;
       unpublishedRef.current = true;
       setPending(true);
-      save('profile', JSON.parse(snapshot));
+      const clean = JSON.parse(snapshot);
+      save('profile', clean);
+      flushKeys(
+        changedKeys({ profile: JSON.parse(previous) }, { profile: clean }),
+        stateOf(undefined, undefined, clean)
+      );
     }, 500);
     return () => clearTimeout(id);
   }, [profile, ready, save]);
@@ -911,6 +1039,9 @@ export default function WorkoutTracker() {
       const record = persistable(logsRef.current);
       savedRef.current = JSON.stringify(record);
       save('workout-logs', record);
+      // Anything the store still has not taken goes up now: back in signal
+      // and closing the app is the last chance the page gets.
+      flushRef.current?.([...pendingKeysRef.current], stateOf(record));
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
       setPending(false);
@@ -929,10 +1060,20 @@ export default function WorkoutTracker() {
 
   const saveLogs = async () => {
     const record = persistable(logs);
+    const previous = savedRef.current;
     savedRef.current = JSON.stringify(record);
     unpublishedRef.current = false;
     setPending(false);
     const ok = await save('workout-logs', record);
+    // The button is a flush: the day just written plus anything the store
+    // refused earlier.
+    const keys = new Set(pendingKeysRef.current);
+    for (const k of changedKeys(
+      { 'workout-logs': JSON.parse(previous || '{}') },
+      { 'workout-logs': record }
+    ))
+      keys.add(k);
+    await flushKeys([...keys], stateOf(record));
     const published = await publishAll(record, bwLogs);
     if (ok || published) {
       setSavedFlash('workout');
@@ -969,15 +1110,53 @@ export default function WorkoutTracker() {
     // it had been, while Stats went on using the real one.
     const onRecord = nextBw.find((e) => e.date === today) || nextBw[0];
     setWeightInput(onRecord ? String(onRecord.weight) : '');
+    const previousProfile = savedProfileRef.current;
     savedProfileRef.current = JSON.stringify(clean);
     unpublishedRef.current = false;
     setPending(false);
     const okProfile = await save('profile', clean);
     const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
+    const profileKeys = new Set(pendingKeysRef.current);
+    for (const k of changedKeys(
+      { profile: JSON.parse(previousProfile || '{}'), 'bodyweight-logs': weightHistory },
+      { profile: clean, 'bodyweight-logs': nextBw }
+    ))
+      profileKeys.add(k);
+    await flushKeys([...profileKeys], stateOf(persistable(logs), nextBw, clean));
     const published = await publishAll(persistable(logs), nextBw, clean);
     if ((okProfile && okWeight) || published) {
       setSavedFlash('profile');
       setTimeout(() => setSavedFlash(null), 1500);
+    }
+  };
+
+  // The whole record as one file: every session, the weights, the profile and
+  // the photo, in the same shape the app reads. While the log lived inside the
+  // page, saving the page was a complete backup — this is that back.
+  const exportLog = async () => {
+    if (!downloader) return;
+    const body = JSON.stringify(
+      {
+        'workout-logs': persistable(logs),
+        'bodyweight-logs': weightHistory,
+        profile,
+        theme,
+        exportedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+    const res = await downloader(`training-log-${today}.json`, body);
+    if (res.ok) {
+      setExportState('saved');
+      setTimeout(() => setExportState(null), 1500);
+      return;
+    }
+    // Declining the prompt is an answer, not a fault. Only a real refusal is
+    // worth putting on screen.
+    if (res.code !== 'declined') {
+      setExportState('failed');
+      setTimeout(() => setExportState(null), 3000);
     }
   };
 
@@ -1017,6 +1196,7 @@ export default function WorkoutTracker() {
     const next = theme === 'light' ? 'dark' : 'light';
     setTheme(next);
     save('theme', next);
+    flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, next));
   };
 
   useEffect(() => {
@@ -2223,6 +2403,31 @@ export default function WorkoutTracker() {
               'Save profile'
             )}
           </button>
+
+          {/* Only when this view can actually hand over a file. An export
+              button that cannot export is worse than none. */}
+          {downloader && (
+            <button
+              onClick={exportLog}
+              aria-label="Export log"
+              className="w-full mt-2 bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2"
+            >
+              {exportState === 'saved' ? (
+                <>
+                  <Check size={16} /> Exported
+                </>
+              ) : (
+                <>
+                  <Download size={16} /> Export log
+                </>
+              )}
+            </button>
+          )}
+          {exportState === 'failed' && (
+            <p className="text-xs text-dim mt-2 text-center">
+              That file could not be saved.
+            </p>
+          )}
         </div>
       )}
 
