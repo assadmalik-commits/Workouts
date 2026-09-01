@@ -151,8 +151,14 @@ only ever be dated today, whatever date Home happens to be showing.
 **One entry a day.** The log is keyed by date, so saving a weight again on the
 same day replaces that day's rather than adding to it — correcting a typo costs
 nothing and does not leave two readings for one morning. Earlier days are never
-touched. The field says so, because a rule the lifter cannot see is a rule they
-will be surprised by.
+touched.
+
+The field said so, in a line under it, and that line came off again at v7.4: it
+described the app's own bookkeeping rather than telling the lifter anything they
+needed. The screen takes their details; how the log is keyed is the app's
+business. The same edit removed a BMI reading from the profile — the number
+belongs on the screen built to classify it, one tap away, not floating loose
+beside the height field.
 
 The photo is re-encoded before it is stored: cropped square, drawn at 256px —
 the largest it is ever displayed — and saved as JPEG, which lands around 20KB.

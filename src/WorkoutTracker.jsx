@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.3';
+const APP_VERSION = '7.4';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -2025,21 +2025,7 @@ export default function WorkoutTracker() {
               }}
               className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
             />
-            <div className="text-[13px] text-dim mt-1.5 leading-relaxed">
-              One entry a day, dated today. Saving again replaces today’s; earlier days are kept,
-              so Stats can show the trend.
-            </div>
           </div>
-
-          {bmi !== null && (
-            <button
-              onClick={() => setView('stats')}
-              className="w-full mt-3 bg-surface border border-line rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-            >
-              <span className="text-[15px] font-semibold">BMI {bmi.toFixed(1)}</span>
-              <span className={`text-sm font-bold ${toneText[band.tone]}`}>{band.label}</span>
-            </button>
-          )}
 
           <button
             onClick={saveProfile}
