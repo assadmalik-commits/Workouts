@@ -74,6 +74,25 @@ cell stays tappable; only the capsule is marked. It cost six pixels of height,
 which came back out of the padding — the foot stays under a seventh of the
 screen, and there is a test that says so.
 
+The capsule is **one element that travels**, not one per section blinking in and
+out. Its position and width are measured from whichever cell is current, because
+it hugs its label and "Profile" is wider than "Home" — a quarter-width slide
+would fit none of them. Transform and width animate over 260ms, and
+`prefers-reduced-motion` turns that off.
+
+Two things it taught, both worth keeping:
+
+- The measuring effect has to depend on `ready`, not only on the view. Until the
+  log loads the app renders a spinner and there is no bar to measure, so the
+  capsule was not placed until the first tap.
+- An arbitrary Tailwind class with a template interpolation hard against its
+  closing bracket is invisible to the scanner. The class was never emitted and
+  the capsule had no colour at all. Leave a space before the interpolation.
+
+The second got through because the assertion guarding it read `alpha < 0.5`,
+which a fully transparent capsule satisfies. It now reads `alpha > 0 && alpha <
+0.5`. An assertion that passes on the thing being absent is not an assertion.
+
 The other half of that system component — the bar shrinking on scroll down and
 returning on scroll up — is deliberately not built. It is the more interesting
 behaviour and the riskier one: Safari's rubber-band scrolling and its
@@ -395,3 +414,119 @@ of editing a session.
 The lesson was about how it arrived: the question was "what do I do with this
 number?", which wanted an explanation, and it was answered with a feature.
 Clarify before building.
+
+## v8.1 — the log moved out of the page
+
+Until now the log and the app were the same file. Saving meant republishing,
+and a republish reloads every open view, so the app was forbidden from saving
+on a timer: a mid-session publish threw the lifter back to today with
+everything closed. Shipping any code change meant reading the live page,
+lifting the log out of `#log-data`, and pasting it into the new build; forget
+that step and the publish is refused, which is the only reason nothing was ever
+lost.
+
+The `db` capability holds documents beside the page instead of inside it. The
+log is now `sessions/<date>`, one document per training day, plus `meta/`
+documents for the profile, the photo, the weights and the theme. What that buys:
+
+- **Saving no longer reloads anything.** This is the real prize, not the
+  workflow. `publishAll` returns early when a store answered.
+- **Shipping code cannot touch the log.** It is not in the file any more.
+- **A day's write is a day's write.** `changedKeys` compares before and after,
+  so typing into today never rewrites August.
+
+### Why one document per day
+
+A single log document would be rewritten in full on every keystroke's debounce
+and would grow without bound against the 256KiB document limit. Per-day
+documents cost about 312 a year against a 5,000-document ceiling — sixteen
+years — and make a write proportional to what changed.
+
+The photo has a document of its own. It is twenty times the rest of the profile
+put together and changes about never, so splitting it keeps every profile write
+small and isolates the one body that could ever approach the size limit.
+
+### The pending set
+
+`db-pending` names the keys this device has written down and the store has not
+taken. It is the whole of the offline story: on the next load those keys beat
+the store's copy, and everything else loses to it. Without it, training in a
+basement and coming back into signal would read the older day back over the
+session that was just done.
+
+Two things had to be got right, and the second was got wrong first:
+
+1. A day cleared on the device must not be resurrected from the store — so a
+   held key with nothing behind it deletes rather than merges.
+2. The local side of the merge cannot be built from the embedded block. The
+   page carries what it last published, and it now publishes almost never, so
+   the offline session exists only on the device. The first cut read the
+   embedded block, and the merge deleted the session it was meant to protect.
+   The test caught it before it shipped: breaking the guard again shows the
+   day's document going to `{}`.
+
+### What this costs
+
+While the log lived in the page, saving the page was a complete backup. Moving
+the data out takes that away, so the Profile screen now offers **Export log** —
+the whole record as one JSON file, sessions, weights, profile and photo, in the
+shape the app itself reads. That is not a nicety; it is the other half of the
+move, and it is why the `downloads` capability is declared.
+
+Declaring `db` also makes the artifact organization-internal: it can no longer
+be shared by public link. For a private log read by one person that costs
+nothing, but it is a door that closes.
+
+### Still true
+
+`sync.js` is untouched and still correct — it is what runs when there is no
+store, and its tests still pass unchanged. Nothing about the WHO screen, the
+programme, the streak rule or the capsule moved.
+
+### Not done
+
+The self-publish path stays until the store has been proven in the lifter's own
+hands. Once it has, `sync.js` and the embedded block can go, and the page
+becomes only an app. Stable exercise IDs are still the next piece of real work.
+
+## Where this is going
+
+Decided September 2026. For at least this week the app stays what it has always
+been: one lifter's log, used daily. After that it starts becoming something a
+stranger could open, with the App Store and Play Store as the eventual target.
+
+That ordering matters for what gets built next, because the two are not the
+same app:
+
+1. **Stable exercise IDs.** Already the next piece of work, and the vision makes
+   it blocking rather than tidy. Log entries are keyed by exercise name, so a
+   user who renames or builds their own exercise strands their sets. Nothing
+   multi-user can be built on top of that. It is also invisible to the lifter
+   and gets more expensive with every session logged, so it is cheap now and
+   never cheaper again.
+2. **The programme becomes data, not code.** `plan.js` is this lifter's own
+   six-day split, written in source. A stranger needs their own.
+3. **Accounts, and a second person's data.** Not before the two above.
+
+### What survives the move and what does not
+
+`db.js`, `sync.js` and `storage.js` — 444 lines of 3,440, about 13% — are
+Claude-artifact-specific. `claude.use()` does not exist on a phone, so that
+layer is replaced by on-device storage in a wrapped build (Capacitor keeps this
+codebase; React Native would not). Everything else — the programme, the WHO
+screen, the streak rule, the whole interface — is ordinary React and travels.
+
+This is the argument for v8.1 beyond the reload it fixed: the record is now a
+set of documents with a defined shape rather than a page that rewrites itself,
+and a defined shape is portable. The old model was not.
+
+The WHO discipline pays off here too. A health screen that follows one named
+standard, cites it, and mixes in no coaching of its own is far easier to defend
+at App Store review than one that gives advice it cannot source.
+
+### This week is also v8.1's soak test
+
+The self-publish fallback in `sync.js` stays until the store has been proven in
+the lifter's own hands. A week of real sessions is that proof. If saving never
+reloads the app and nothing goes missing, the fallback and the embedded block
+can go and the page becomes only an app.

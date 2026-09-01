@@ -12,8 +12,10 @@ has already been tried and rejected.
   of which Home is the only one that logs anything.
 - `src/profile.js` — the lifter, and what is worked out from them: BMI, the WHO
   bands, age from date of birth, the photo downscaler.
-- `src/sync.js` — durable storage: the published page rewrites itself with the
-  log embedded in it.
+- `src/db.js` — the record. One document per training day beside the page,
+  plus the merge that decides between it and the device.
+- `src/sync.js` — the fallback: the published page rewrites itself with the log
+  embedded in it, used only when there is no store.
 - `src/storage.js` — localStorage behind an async interface.
 
 ## Build and test
@@ -32,19 +34,35 @@ of its last command, so a broken build reports success and every later
 measurement silently runs against a stale bundle. This has caused wasted work
 twice.
 
+**The store is the record; the page is not.** The log lives in `db`, one
+document per training day, written on the same short debounce as the device
+copy. A save is a write and nothing moves on screen.
+
 **Never publish the artifact on a timer.** `artifact.publish()` saves a new
 version and *every open view reloads to it, including this one*. Mid-session
-that throws the lifter back to today with everything closed. Publish only when
-the lifter acts (the Save button) or when the page is hidden. The device copy
-is written on a short debounce; that is what makes losing work impossible.
+that throws the lifter back to today with everything closed. Publishing is now
+the fallback for a view with no store, and `publishAll` refuses outright when
+there is one — that guard is what keeps a save from reloading the page under
+the lifter. It is only reachable out of signal, which is where its test has to
+live: with a healthy store the Save button disables itself the moment the write
+confirms, so nothing can be caught there.
 
 **Opening an exercise is not an edit.** It adds a blank set so there is a row to
 type into. Compare `persistable(logs)` — filled sets only — to decide whether
 anything actually changed, or merely browsing the plan will republish the page.
 
-**Re-read the live artifact before every republish.** The lifter's log lives
-inside the published page and they save from it. Publishing without merging
-their latest version is refused, and rightly.
+**Shipping code no longer carries the lifter's log.** It is in the store, so a
+new version is a plain publish. The `#log-data` block left in the page is a
+frozen backup from the migration, not the record — refresh it from `read_db`
+if it is ever worth refreshing, never by reading the whole page back.
+
+**What the device holds and the store has not taken is named in `db-pending`.**
+That set is the only reason a session trained out of signal survives: on the
+next load it outranks the store's older copy of the same day. The page carries
+what it last published and now publishes almost never, so anything held has to
+be read back off the device — building the merge's local side from the embedded
+block alone silently destroys the session. That bug was written and caught by
+its own test before it shipped; the test is `E` in `tdb.mjs`.
 
 **A local copy of the artifact needs `<meta name="viewport">`.** The artifact
 host injects one; a local file without it lays out at 980px under mobile
@@ -71,6 +89,12 @@ can check.
 **Log entries are keyed by exercise name.** Renaming an exercise strands its
 sets unless `RENAMED` carries them across. See the design notes: stable IDs are
 the next piece of work for exactly this reason.
+
+**Until IDs land, do not add anything else that keys off an exercise name.**
+Every feature that does has to be unpicked later, and the app is headed
+somewhere a stranger names their own exercises. A new feature that needs to
+refer to an exercise is a reason to do the IDs first, not a reason to key one
+more thing by name.
 
 ## Working style
 
