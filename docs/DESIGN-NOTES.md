@@ -91,9 +91,31 @@ it earns its place.
 
 Each band says something of its own, and what it says is WHO's own
 risk-of-comorbidities grading — low, average, increased, moderate, severe, very
-severe — plus the name WHO gives the band. Six bands, six different lines, none
-of them invented. WHO's caveats on the measure hold everywhere, so they are
-said once underneath rather than under each.
+severe — plus the name and range WHO gives the band. Six bands, six different
+lines, none of them invented. WHO's caveats on the measure hold everywhere, so
+they are said once underneath rather than under each.
+
+The source is **WHO Technical Report Series 894 (2000), Table 2.1**, transcribed
+in `docs/who-trs-894-table-2.1.txt` and named on the screen so the reading can
+be looked up rather than taken on the app's word. That transcription is worth
+keeping: this environment cannot reach who.int, and the table was got here by
+the lifter opening the report and copying it out.
+
+Checking it against the report corrected five things a secondary source had
+left wrong. WHO's label for 18.50–24.99 is **normal range**, not normal weight.
+WHO writes the cut-offs to **two decimals**. **Preobese** is WHO's name for
+25.00–29.99, sitting under an "overweight: ≥25.00" heading that carries no risk
+grading of its own. The class II subdivision exists **because management options
+differ above 35**, which is a fact about treatment rather than about risk. And
+the footnote is worth quoting whole — it says the relationship it tabulates is
+*simplistic*, that risk is *continuous and graded*, and that diet, ethnic group
+and activity level all move it. The six risk grades themselves were already
+right.
+
+**Classify what is shown, not what is held.** BMI is displayed to one decimal
+and graded on that same rounded value. Grading the full value instead put 24.96
+on screen as 25.0 under a "normal range" pill, which the lifter has no way to
+resolve.
 
 Two rounds of use shaped that. v7.1 repeated one paragraph about muscle and fat
 under every reading, which read as a disclaimer rather than as guidance. The

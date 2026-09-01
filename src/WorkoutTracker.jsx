@@ -8,11 +8,11 @@ import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
-  bandOf, healthyRange, readAvatar, initialsOf,
+  BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.2';
+const APP_VERSION = '7.3';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -513,7 +513,11 @@ export default function WorkoutTracker() {
   );
   const latestWeight = weightHistory[0] || null;
   const age = ageOn(profile.dob, today);
-  const bmi = bmiOf(latestWeight?.weight, profile.heightCm);
+  const exactBmi = bmiOf(latestWeight?.weight, profile.heightCm);
+  // Classify what is shown, not what is held. Displaying one decimal while
+  // grading the full value puts 24.96 on screen as 25.0 under a "Normal range"
+  // pill — a contradiction with no way for the lifter to resolve it.
+  const bmi = exactBmi === null ? null : Math.round(exactBmi * 10) / 10;
   const band = bandOf(bmi);
   const target = healthyRange(profile.heightCm);
 
@@ -1851,9 +1855,17 @@ export default function WorkoutTracker() {
                   inventing advice to fill the space. The caveats are WHO's too,
                   and hold in every band, so they are said once. */}
               <div className="mt-3 space-y-2">
-                <p className="text-[15px] font-semibold leading-relaxed">{band.risk}</p>
-                <p className="text-[13px] text-dim leading-relaxed">{band.note}</p>
+                <p className="text-[15px] font-semibold leading-relaxed">
+                  <span className="text-dim">Risk of comorbidities: </span>
+                  {band.risk}
+                </p>
+                <p className="text-[13px] text-dim leading-relaxed">
+                  <span className="font-semibold">{band.label}:</span> {band.range}
+                </p>
                 <p className="text-[13px] text-dim leading-relaxed">{BMI_CAVEAT}</p>
+                {/* Named down to the table, so the reading can be looked up
+                    rather than taken on the app's word. */}
+                <p className="text-[13px] text-dim leading-relaxed font-semibold">{BMI_SOURCE}</p>
               </div>
             </>
           )}

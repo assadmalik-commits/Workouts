@@ -38,17 +38,21 @@ export const bmiOf = (weightKg, heightCm) => {
   return Number.isFinite(bmi) ? bmi : null;
 };
 
-// The WHO adult classification, and nothing else.
+// WHO Technical Report Series 894 (2000), Table 2.1, "Classification of adults
+// according to BMI" — transcribed from the report itself, not from a secondary
+// reproduction of it. `to` is the value the band stops at, exclusive; `risk` is
+// WHO's own risk-of-comorbidities grading, which is what lets each band say
+// something different without anyone inventing advice to fill the space.
 //
-// `to` is the value the band stops at, exclusive. `risk` is WHO's own
-// risk-of-comorbidities grading for the band — low, average, increased,
-// moderate, severe, very severe — which is what makes each band say something
-// different without anyone inventing advice to fill the space. `note` names the
-// band the way WHO names it.
+// WHO's own labels, WHO's own two-decimal ranges. "Normal range", not "normal
+// weight". "Preobese" is WHO's name for the 25.00-29.99 slice, nested under an
+// "Overweight: >=25.00" heading that carries no risk grading of its own.
 //
 // No training guidance lives here. The lifter asked for the classification and
 // not for a coach, and an app that mixes the two leaves you unable to tell
 // which half you can look up.
+export const BMI_SOURCE = 'WHO Technical Report Series 894, Table 2.1 (2000)';
+
 export const BMI_BANDS = [
   {
     label: 'Underweight',
@@ -56,17 +60,17 @@ export const BMI_BANDS = [
     from: 0,
     to: 18.5,
     tone: 'amber',
-    risk: 'Low risk of comorbidities — though WHO notes the risk of other clinical problems is increased.',
-    note: 'WHO grades thinness further below this: mild to 17.0, moderate to 16.0, severe under 16.0.',
+    risk: 'Low — but WHO adds: risk of other clinical problems increased.',
+    range: 'Below 18.50.',
   },
   {
-    label: 'Normal weight',
+    label: 'Normal range',
     short: 'Normal',
     from: 18.5,
     to: 25,
     tone: 'mint',
-    risk: 'Average risk of comorbidities.',
-    note: 'WHO calls 18.5 to 24.9 the normal range for adults.',
+    risk: 'Average.',
+    range: '18.50 to 24.99.',
   },
   {
     label: 'Overweight',
@@ -74,8 +78,8 @@ export const BMI_BANDS = [
     from: 25,
     to: 30,
     tone: 'amber',
-    risk: 'Increased risk of comorbidities.',
-    note: 'WHO defines overweight as 25.0 or more, and calls 25.0 to 29.9 pre-obese.',
+    risk: 'Increased.',
+    range: '25.00 to 29.99, which WHO labels preobese, under overweight at 25.00 or more.',
   },
   {
     label: 'Obese class I',
@@ -83,8 +87,8 @@ export const BMI_BANDS = [
     from: 30,
     to: 35,
     tone: 'danger',
-    risk: 'Moderate risk of comorbidities.',
-    note: 'WHO defines obesity as 30.0 or more. This is class I.',
+    risk: 'Moderate.',
+    range: '30.00 to 34.99.',
   },
   {
     label: 'Obese class II',
@@ -92,8 +96,8 @@ export const BMI_BANDS = [
     from: 35,
     to: 40,
     tone: 'danger',
-    risk: 'Severe risk of comorbidities.',
-    note: 'Class II obesity in the WHO classification.',
+    risk: 'Severe.',
+    range: '35.00 to 39.99. WHO adds this subdivision because management options differ above 35.',
   },
   {
     label: 'Obese class III',
@@ -101,17 +105,21 @@ export const BMI_BANDS = [
     from: 40,
     to: Infinity,
     tone: 'danger',
-    risk: 'Very severe risk of comorbidities.',
-    note: 'Class III obesity in the WHO classification, the highest grade it names.',
+    risk: 'Very severe.',
+    range: '40.00 or more.',
   },
 ];
 
-// WHO's own caveats on the measure, which hold in every band and so are said
-// once rather than under each.
+// The footnote to Table 2.1, plus the sentence from section 2.3.2 that answers
+// the question a lifter actually has. WHO's words, because a paraphrase of a
+// standard is no longer the standard.
 export const BMI_CAVEAT =
-  'WHO adult classification. WHO calls BMI a rough guide: it may not correspond to the same ' +
-  'degree of fatness in different individuals or populations, the risks it grades are ' +
-  'continuous rather than stepped, and a waist measurement can add to it.';
+  'These BMI values are age-independent and the same for both sexes. BMI does not distinguish ' +
+  'between weight associated with muscle and weight associated with fat, and may not correspond ' +
+  'to the same degree of fatness in different populations. The table shows a simplistic ' +
+  'relationship between BMI and the risk of comorbidity, which can be affected by a range of ' +
+  'factors, including the nature of the diet, ethnic group and activity level. The risks ' +
+  'associated with increasing BMI are continuous and graded and begin at a BMI above 25.';
 
 export const bandOf = (bmi) =>
   bmi === null || bmi === undefined ? null : BMI_BANDS.find((b) => bmi < b.to) || null;
