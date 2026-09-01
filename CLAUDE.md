@@ -60,9 +60,13 @@ reaches storage — the profile picture is cropped square and drawn at 256px,
 which lands near 20KB. An untouched camera JPEG would be twenty times the log
 it rides with.
 
-**One health standard, named on screen.** BMI follows the WHO adult bands, and
-the page says so. Alternatives exist and are argued in the design notes; mixing
-them gives a reading nobody can look up.
+**One health standard, named on screen, and nothing alongside it.** BMI follows
+the WHO adult bands, including WHO's own risk-of-comorbidities grading and
+WHO's own caveats, and the page says so. Alternatives exist and are argued in
+the design notes; mixing them gives a reading nobody can look up. Do not add
+training advice to that screen — it was tried and rejected. An app that mixes a
+standard with its own coaching leaves the lifter unable to tell which half they
+can check.
 
 **Log entries are keyed by exercise name.** Renaming an exercise strands its
 sets unless `RENAMED` carries them across. See the design notes: stable IDs are

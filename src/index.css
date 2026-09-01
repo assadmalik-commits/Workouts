@@ -100,6 +100,18 @@ input[type='number'] {
   appearance: textfield;
 }
 
+/* The section bar is for tapping. A long press on a phone otherwise starts a
+   text selection and raises the callout menu over the thing being pressed,
+   which is neither useful nor recoverable mid-set. Tailwind's select-none
+   covers the selection; the callout and the grey tap flash need saying here. */
+.app-bar,
+.app-bar * {
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* Digits that line up wherever they're compared. */
 .nums {
   font-variant-numeric: tabular-nums;

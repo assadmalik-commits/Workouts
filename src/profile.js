@@ -38,15 +38,80 @@ export const bmiOf = (weightKg, heightCm) => {
   return Number.isFinite(bmi) ? bmi : null;
 };
 
-// The WHO adult classification. `to` is the value the band stops at, exclusive.
+// The WHO adult classification, and nothing else.
+//
+// `to` is the value the band stops at, exclusive. `risk` is WHO's own
+// risk-of-comorbidities grading for the band — low, average, increased,
+// moderate, severe, very severe — which is what makes each band say something
+// different without anyone inventing advice to fill the space. `note` names the
+// band the way WHO names it.
+//
+// No training guidance lives here. The lifter asked for the classification and
+// not for a coach, and an app that mixes the two leaves you unable to tell
+// which half you can look up.
 export const BMI_BANDS = [
-  { label: 'Underweight', short: 'Under', from: 0, to: 18.5, tone: 'amber' },
-  { label: 'Normal weight', short: 'Normal', from: 18.5, to: 25, tone: 'mint' },
-  { label: 'Overweight', short: 'Over', from: 25, to: 30, tone: 'amber' },
-  { label: 'Obese class I', short: 'Ob I', from: 30, to: 35, tone: 'danger' },
-  { label: 'Obese class II', short: 'Ob II', from: 35, to: 40, tone: 'danger' },
-  { label: 'Obese class III', short: 'Ob III', from: 40, to: Infinity, tone: 'danger' },
+  {
+    label: 'Underweight',
+    short: 'Under',
+    from: 0,
+    to: 18.5,
+    tone: 'amber',
+    risk: 'Low risk of comorbidities — though WHO notes the risk of other clinical problems is increased.',
+    note: 'WHO grades thinness further below this: mild to 17.0, moderate to 16.0, severe under 16.0.',
+  },
+  {
+    label: 'Normal weight',
+    short: 'Normal',
+    from: 18.5,
+    to: 25,
+    tone: 'mint',
+    risk: 'Average risk of comorbidities.',
+    note: 'WHO calls 18.5 to 24.9 the normal range for adults.',
+  },
+  {
+    label: 'Overweight',
+    short: 'Over',
+    from: 25,
+    to: 30,
+    tone: 'amber',
+    risk: 'Increased risk of comorbidities.',
+    note: 'WHO defines overweight as 25.0 or more, and calls 25.0 to 29.9 pre-obese.',
+  },
+  {
+    label: 'Obese class I',
+    short: 'Ob I',
+    from: 30,
+    to: 35,
+    tone: 'danger',
+    risk: 'Moderate risk of comorbidities.',
+    note: 'WHO defines obesity as 30.0 or more. This is class I.',
+  },
+  {
+    label: 'Obese class II',
+    short: 'Ob II',
+    from: 35,
+    to: 40,
+    tone: 'danger',
+    risk: 'Severe risk of comorbidities.',
+    note: 'Class II obesity in the WHO classification.',
+  },
+  {
+    label: 'Obese class III',
+    short: 'Ob III',
+    from: 40,
+    to: Infinity,
+    tone: 'danger',
+    risk: 'Very severe risk of comorbidities.',
+    note: 'Class III obesity in the WHO classification, the highest grade it names.',
+  },
 ];
+
+// WHO's own caveats on the measure, which hold in every band and so are said
+// once rather than under each.
+export const BMI_CAVEAT =
+  'WHO adult classification. WHO calls BMI a rough guide: it may not correspond to the same ' +
+  'degree of fatness in different individuals or populations, the risks it grades are ' +
+  'continuous rather than stepped, and a waist measurement can add to it.';
 
 export const bandOf = (bmi) =>
   bmi === null || bmi === undefined ? null : BMI_BANDS.find((b) => bmi < b.to) || null;

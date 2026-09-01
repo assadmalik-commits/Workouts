@@ -7,12 +7,12 @@ import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
-  SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, bandOf,
-  healthyRange, readAvatar, initialsOf,
+  SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
+  bandOf, healthyRange, readAvatar, initialsOf,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.1';
+const APP_VERSION = '7.2';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -748,10 +748,17 @@ export default function WorkoutTracker() {
   // going away, which is the moment the device copy might not survive.
   const logsRef = useRef(logs);
   const bwRef = useRef(bwLogs);
-  const placeRef = useRef(null);
   logsRef.current = logs;
   bwRef.current = bwLogs;
-  placeRef.current = { date, tab, variant, view };
+
+  // Where the lifter is, kept current. Writing this at publish time instead
+  // recorded where they were when they pressed Save — so moving to another
+  // section before the publish's reload arrived put them back on the one they
+  // had left. It is a sessionStorage write per navigation and nothing more.
+  useEffect(() => {
+    if (!ready) return;
+    rememberPlace({ date, tab, variant, view });
+  }, [ready, date, tab, variant, view]);
 
   // Written down since the last publish, and so not yet durable.
   const unpublishedRef = useRef(false);
@@ -808,7 +815,6 @@ export default function WorkoutTracker() {
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
       setPending(false);
-      rememberPlace(placeRef.current);
       publishRef.current?.(record, bwRef.current, profileRef.current);
     };
     const onHide = () => {
@@ -828,7 +834,6 @@ export default function WorkoutTracker() {
     unpublishedRef.current = false;
     setPending(false);
     const ok = await save('workout-logs', record);
-    rememberPlace(placeRef.current);
     const published = await publishAll(record, bwLogs);
     if (ok || published) {
       setSavedFlash('workout');
@@ -865,7 +870,6 @@ export default function WorkoutTracker() {
     setPending(false);
     const okProfile = await save('profile', clean);
     const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
-    rememberPlace(placeRef.current);
     const published = await publishAll(persistable(logs), nextBw, clean);
     if ((okProfile && okWeight) || published) {
       setSavedFlash('profile');
@@ -1842,11 +1846,15 @@ export default function WorkoutTracker() {
                 </div>
               )}
 
-              <p className="text-[13px] text-dim leading-relaxed mt-3">
-                WHO classification. BMI compares mass to height and cannot tell muscle from fat,
-                so six days of lifting will push it up. Read it alongside what the log says, not
-                instead of it.
-              </p>
+              {/* WHO's own risk grading for this band, which differs in all six
+                  — so each reading says something about itself without anyone
+                  inventing advice to fill the space. The caveats are WHO's too,
+                  and hold in every band, so they are said once. */}
+              <div className="mt-3 space-y-2">
+                <p className="text-[15px] font-semibold leading-relaxed">{band.risk}</p>
+                <p className="text-[13px] text-dim leading-relaxed">{band.note}</p>
+                <p className="text-[13px] text-dim leading-relaxed">{BMI_CAVEAT}</p>
+              </div>
             </>
           )}
 
@@ -2006,7 +2014,8 @@ export default function WorkoutTracker() {
               className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
             />
             <div className="text-[13px] text-dim mt-1.5 leading-relaxed">
-              Saved against today. Every weight you enter is kept, so Stats can show the trend.
+              One entry a day, dated today. Saving again replaces today’s; earlier days are kept,
+              so Stats can show the trend.
             </div>
           </div>
 
@@ -2040,7 +2049,7 @@ export default function WorkoutTracker() {
           strip and a filled green slab took a seventh of a 440px screen and
           read as chrome; this reads as something resting on the page. The
           gutters around it pass taps through to whatever is underneath. */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none">
+      <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none">
         {showSave && (
           <button
             onClick={saveLogs}

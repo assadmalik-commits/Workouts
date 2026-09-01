@@ -41,7 +41,10 @@ belongs to Home alone, and why it sits above the bar rather than competing with
 it for the same strip of a 440px phone.
 
 The bar floats: rounded, translucent, blurred, with the session scrolling
-behind it and the gutters passing taps through. The first version was an opaque
+behind it and the gutters passing taps through. Nothing in it is selectable — a
+long press on a phone otherwise starts a text selection and raises the callout
+menu over the button being pressed, which is neither useful nor recoverable
+mid-set. The first version was an opaque
 strip with a filled green Save slab on top of it, and between them they walled
 off a seventh of the screen — v7.0 was rejected on exactly that. Two changes
 fixed it. The Save button only fills when something has not reached the
@@ -86,9 +89,32 @@ answers a question — how much should I eat — that this app is not otherwise 
 The profile still carries date of birth and sex, so it can come back cheaply if
 it earns its place.
 
-The screen says out loud what BMI cannot do: it compares mass to height, cannot
-tell muscle from fat, and six days of progressive overload will push it up.
-That sentence is the point of the screen, not a disclaimer on it.
+Each band says something of its own, and what it says is WHO's own
+risk-of-comorbidities grading — low, average, increased, moderate, severe, very
+severe — plus the name WHO gives the band. Six bands, six different lines, none
+of them invented. WHO's caveats on the measure hold everywhere, so they are
+said once underneath rather than under each.
+
+Two rounds of use shaped that. v7.1 repeated one paragraph about muscle and fat
+under every reading, which read as a disclaimer rather than as guidance. The
+first replacement gave each band advice — see a doctor, watch your waist, the
+log is better evidence than this number — and that was rejected on the ground
+that settles it: **no training or lifting guidance on this screen, WHO and
+nothing else.** An app that mixes a standard with its own coaching leaves you
+unable to tell which half you can look up.
+
+## Where the lifter is, and what a publish does to it
+
+Publishing reloads every open view, this one included, so the app leaves itself
+a note of where the lifter was and reads it back on boot. That note used to be
+written at the moment Save was pressed — which meant moving to another section
+before the publish's reload arrived put the lifter back on the section they had
+left. Saving a weight on the profile and stepping across to Stats bounced
+straight back to the profile.
+
+The note is now kept current: it describes where the lifter is, not where they
+were when they pressed the button. It costs one sessionStorage write per
+navigation.
 
 ## The profile, and the photo
 
@@ -99,6 +125,12 @@ wrong within a year and nothing on screen would say so. Weight is not stored on
 the profile either — the field writes an entry into the weight log, dated today,
 so the history keeps its dates while the profile shows a current weight. It can
 only ever be dated today, whatever date Home happens to be showing.
+
+**One entry a day.** The log is keyed by date, so saving a weight again on the
+same day replaces that day's rather than adding to it — correcting a typo costs
+nothing and does not leave two readings for one morning. Earlier days are never
+touched. The field says so, because a rule the lifter cannot see is a rule they
+will be surprised by.
 
 The photo is re-encoded before it is stored: cropped square, drawn at 256px —
 the largest it is ever displayed — and saved as JPEG, which lands around 20KB.
