@@ -849,9 +849,13 @@ export default function WorkoutTracker() {
     const onFile = weightHistory.find((e) => e.date === today);
     let nextBw = weightHistory;
     if (weight && Number(weight) > 0 && (!onFile || String(onFile.weight) !== weight)) {
+      // No `notes` key. It is the marker that says an entry came from the
+      // scrapped Bodyweight tab, and writing one here would make every weight
+      // the profile saves look legacy — so the migration would re-date it
+      // every morning and eat the history it is meant to keep.
       nextBw = [
         ...weightHistory.filter((e) => e.date !== today),
-        { date: today, weight, notes: onFile?.notes || '' },
+        { date: today, weight },
       ].sort((a, b) => (a.date < b.date ? 1 : -1));
     }
     setProfile(clean);
