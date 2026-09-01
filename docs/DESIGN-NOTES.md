@@ -125,6 +125,32 @@ that settles it: **no training or lifting guidance on this screen, WHO and
 nothing else.** An app that mixes a standard with its own coaching leaves you
 unable to tell which half you can look up.
 
+## A set is a weight and a rep count
+
+Either one alone is a row still being typed, not a lighter version of the same
+record. Accepting half of one put `1 set · max 20kg` on the screen for an
+exercise nobody had finished writing down, and counted it toward the session
+being trained. A weight of **0** is a real weight — that is how bodyweight work
+is written — so the test is whether something was written, not whether it is
+non-zero.
+
+The Save button follows from that. It is inert when there is nothing unsaved:
+pressing it used to flash green as though something had been written down, which
+is the opposite of what that colour means everywhere else on the same button. It
+still says *Saved*, because the reassurance of seeing that is why it stays on
+screen at all.
+
+## Leaving Home ends the visit to the day
+
+A past date is opened deliberately, through the calendar, and reached for a
+reason. Crossing to Stats and coming back is not that reason — and returning to
+an open form for 30 August three days later is a good way to write to the wrong
+day. So arriving at Home from another section resets it to the day being trained
+and the session due on it.
+
+A reload is not a section change. A publish still puts the lifter back exactly
+where they were, past date included, which is what the resume note below is for.
+
 ## Where the lifter is, and what a publish does to it
 
 Publishing reloads every open view, this one included, so the app leaves itself
@@ -246,6 +272,35 @@ date, switched when the lifter chooses.
 The profile exists now, and it holds the lifter rather than their preferences.
 Units, available equipment and a programme start date are a different thing —
 settings — and none has been asked for yet.
+
+## Looked at and dropped — do not re-propose without asking
+
+**Calories burnt per session.** Researched at v7.5 and dropped before anything
+was built.
+
+There is no gold-standard formula, only a gold-standard measurement: indirect
+calorimetry, which for resistance work also needs blood lactate to catch the
+anaerobic share. The practical standard is the Compendium of Physical
+Activities — code 02054, MET 3.5, "multiple exercises, 8–15 repetitions at
+varied resistance", which describes this programme almost word for word.
+
+`kcal/min = MET × 3.5 × kg ÷ 200`. At 69 kg over 40 minutes that is 169 kcal,
+121 of them above resting.
+
+It was dropped because of what that equation does not contain: the load, the
+reps, the sets. Two of the lifter's own sessions moved 2,297 kg and 6,624 kg —
+nearly three times the work — and both come out at 169 kcal. With a roughly
+fixed session length the figure is a constant wearing a measurement's clothes,
+and it would sit next to a volume-load number that is measured rather than
+estimated, and weaker than it.
+
+The physics route is worse, not better: mass × gravity × range × reps ÷
+efficiency gives 11 and 31 kcal for those same sessions. It counts only the
+concentric phase, guesses the range of motion, scores bodyweight work at zero,
+and misses the hours of raised metabolism afterwards.
+
+Treadmills get away with it because the machine *sets* the work — belt speed and
+deck angle are known, not guessed — and even then they run 15–20% high.
 
 ## Tried and removed — do not re-propose without asking
 

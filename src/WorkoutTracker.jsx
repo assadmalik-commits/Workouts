@@ -12,7 +12,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '7.4';
+const APP_VERSION = '7.5';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -106,7 +106,14 @@ const cleanNumber = (value, allowDecimal) =>
 // 16 overstates the work by a quarter and erases the ramp itself.
 const setsOf = (entry) => (Array.isArray(entry?.sets) ? entry.sets : []);
 
-const setFilled = (set) => Boolean(set && (set.w !== '' || set.r !== ''));
+// A set is a weight and a rep count together. Either one alone is not a
+// lighter version of the same record — it is a row still being typed. Accepting
+// it put "1 set · max 20kg" on the screen for an exercise nobody had finished
+// writing down, and counted it toward the session being trained.
+//
+// A weight of 0 is a real weight: that is how bodyweight work is written.
+const written = (v) => v !== '' && v !== null && v !== undefined;
+const setFilled = (set) => Boolean(set && written(set.w) && written(set.r));
 
 const isFilled = (entry) => setsOf(entry).some(setFilled);
 
@@ -569,6 +576,23 @@ export default function WorkoutTracker() {
     }
   };
 
+  // Leaving Home ends the visit to whatever day was being looked at. A past
+  // date is opened deliberately, through the calendar, and reached for a
+  // reason; crossing to Stats and back is not that reason, and coming back to
+  // a form for 30 August three days later is a good way to write to the wrong
+  // day. So the section resets to the day being trained and the session due on
+  // it. A reload is not a section change and still restores the lifter's place.
+  const resetToToday = () => {
+    setDate(today);
+    setPinned(false);
+    setRestPeek(false);
+    setOpenEx(null);
+    if (nextUp) {
+      setTab(nextUp.day);
+      setVariant(nextUp.variant);
+    }
+  };
+
   // Coming back to today from a past date left the session you were correcting
   // on screen — and today refuses it, so you landed on its lock card rather
   // than on the session actually due. Only rescue that case; a session today
@@ -937,6 +961,17 @@ export default function WorkoutTracker() {
       setVariant(nextUp.variant);
     }
   }, [today, pinned, nextUp]);
+
+  // Reset on the way back into Home, not on boot — a publish's reload must
+  // still put the lifter back where they were, and that is not a section
+  // change.
+  const cameFromRef = useRef(view);
+  useEffect(() => {
+    const previous = cameFromRef.current;
+    cameFromRef.current = view;
+    if (view !== 'home' || previous === 'home') return;
+    resetToToday();
+  });
 
   // Choosing to edit a day is a decision about that day, taken now. Leaving it
   // ends the edit: without this the unlock outlived the visit, so coming back
@@ -2051,6 +2086,11 @@ export default function WorkoutTracker() {
         {showSave && (
           <button
             onClick={saveLogs}
+            // Nothing to save is nothing to press. It stayed pressable for the
+            // reassurance of being able to press it, but pressing it flashed
+            // green as though something had been written down — the opposite
+            // of what the colour means everywhere else on this button.
+            disabled={!pending && savedFlash !== 'workout'}
             aria-label={`Save ${tab} ${variant}`}
             className={`pointer-events-auto w-full mb-2 rounded-2xl py-2.5 text-sm font-bold flex items-center justify-center gap-1.5 shadow-lg transition ${
               pending || savedFlash === 'workout'
@@ -2080,10 +2120,10 @@ export default function WorkoutTracker() {
               <button
                 key={key}
                 onClick={() => {
-                  // Home is the way back to the day being trained, so tapping
-                  // it from elsewhere returns to today rather than to whatever
-                  // past date was last opened.
-                  if (key === 'home' && view === 'home' && date !== today) returnToToday();
+                  // Home is the day being trained. Tapping it while already
+                  // there is the same intent as arriving from another section,
+                  // which the effect above handles.
+                  if (key === 'home' && view === 'home') resetToToday();
                   setView(key);
                 }}
                 aria-current={on ? 'page' : undefined}
