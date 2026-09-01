@@ -273,6 +273,35 @@ The profile exists now, and it holds the lifter rather than their preferences.
 Units, available equipment and a programme start date are a different thing —
 settings — and none has been asked for yet.
 
+## Looked at and dropped — do not re-propose without asking
+
+**Calories burnt per session.** Researched at v7.5 and dropped before anything
+was built.
+
+There is no gold-standard formula, only a gold-standard measurement: indirect
+calorimetry, which for resistance work also needs blood lactate to catch the
+anaerobic share. The practical standard is the Compendium of Physical
+Activities — code 02054, MET 3.5, "multiple exercises, 8–15 repetitions at
+varied resistance", which describes this programme almost word for word.
+
+`kcal/min = MET × 3.5 × kg ÷ 200`. At 69 kg over 40 minutes that is 169 kcal,
+121 of them above resting.
+
+It was dropped because of what that equation does not contain: the load, the
+reps, the sets. Two of the lifter's own sessions moved 2,297 kg and 6,624 kg —
+nearly three times the work — and both come out at 169 kcal. With a roughly
+fixed session length the figure is a constant wearing a measurement's clothes,
+and it would sit next to a volume-load number that is measured rather than
+estimated, and weaker than it.
+
+The physics route is worse, not better: mass × gravity × range × reps ÷
+efficiency gives 11 and 31 kcal for those same sessions. It counts only the
+concentric phase, guesses the range of motion, scores bodyweight work at zero,
+and misses the hours of raised metabolism afterwards.
+
+Treadmills get away with it because the machine *sets* the work — belt speed and
+deck angle are known, not guessed — and even then they run 15–20% high.
+
 ## Tried and removed — do not re-propose without asking
 
 **A progression prompt** (`3 sets · max 14kg · ready to add weight`, plus a
