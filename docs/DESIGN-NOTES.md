@@ -54,6 +54,22 @@ the bar's ground is a variable rather than a token, because the two themes need
 different amounts of it: dark text on a light page ghosts through far more than
 light text on a dark one at the same opacity.
 
+The section you are on is marked by a **capsule behind it**, not by colour
+alone — the pattern iOS 26's Liquid Glass tab bar uses, and the one WhatsApp
+adopted along with it. The capsule is translucent like the bar itself, so it
+lifts or dims what the bar is already showing rather than painting over it, and
+it carries its own value per theme for the same reason the bar does. The whole
+cell stays tappable; only the capsule is marked. It cost six pixels of height,
+which came back out of the padding — the foot stays under a seventh of the
+screen, and there is a test that says so.
+
+The other half of that system component — the bar shrinking on scroll down and
+returning on scroll up — is deliberately not built. It is the more interesting
+behaviour and the riskier one: Safari's rubber-band scrolling and its
+disappearing address bar both fire scroll events, and a bar that moves when you
+did not ask it to is a different proposition mid-set than on a browsing
+screen.
+
 ## The streak counts days, not weeks
 
 Saturday is the program's rest day, so the walk steps over it: it neither
