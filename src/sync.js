@@ -66,8 +66,12 @@ function buildDocument(state) {
     // The artifact's name is the reader's, not this file's: republishing with a
     // hardcoded title renamed it back on every save.
     `<title>${(document.title || 'Workout Tracker').replace(/</g, '\\u003c')}</title>`,
-    '<style id="' + CSS_ID + '">' + css.textContent + '</style>',
+    // Before the stylesheet, not after it. html's background is
+    // var(--color-night) unconditionally and the light palette is what
+    // data-app-theme switches on, so a stylesheet that applies before the
+    // attribute is set paints one dark frame at every open.
     boot ? '<script id="' + BOOT_ID + '">' + boot.textContent + '<\/script>' : '',
+    '<style id="' + CSS_ID + '">' + css.textContent + '</style>',
     '</head>',
     '<body>',
     '<div id="root"></div>',
