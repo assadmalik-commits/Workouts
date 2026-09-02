@@ -625,3 +625,61 @@ That rule answers the same question for every field added later.
 - An implausible height or weight can no longer be entered at all — the Save
   never lights — so "that does not look right" is now only reachable from data
   recorded before those guards existed. It still has a test, seeded directly.
+
+## v9.0 — System, Light, Dark, and why it took five versions
+
+A flash on every open: choose day, close the app, and it comes back dark for
+about a second before correcting. Four attempts, and the first three fixed real
+faults that were not this one.
+
+- **v8.5** made the device's copy beat the store. Real bug, wrong one.
+- **v8.6** set the theme before React mounted rather than from an effect. Also
+  real: the palette is dark by default and light is what `data-app-theme`
+  switches on, so a document without that attribute is a dark document.
+- **v8.7** moved that boot script ahead of the 26KB stylesheet it governs — in
+  the published page it had been sitting at byte 26375 with the stylesheet at
+  155. Real again, still not it.
+- **v8.8** found it: on iOS the artifact runs in a cross-origin frame whose
+  localStorage Safari discards with the tab. `sync.js` has carried a comment
+  saying so since it was written. So on every reopen there was no device copy,
+  and the load fell back to the theme embedded in the page — frozen at publish
+  time, saying dark since the v8.3 build, while the store said light. Light,
+  dark, light.
+- **v8.9** replaced that with a hardcoded light default, which fixed day mode by
+  breaking night mode. A fixed guess is wrong for half the people.
+
+### What the whole thing was really about
+
+An app-held light/dark preference needs somewhere durable to read it from
+*before the first paint*. In this frame there is nowhere: storage is discarded,
+the page's copy is stale, and the store is a network call. Every version above
+was an attempt to work around a preference the device cannot hold.
+
+So the preference changed shape. **System is the default**, and System resolves
+from `prefers-color-scheme` — synchronously, correctly, every time, with nothing
+to remember. Light and Dark remain as explicit overrides for anyone who wants
+the app to disagree with their phone, and those still ride in the store.
+
+On System there is one painted frame and no flash at all, on either kind of
+phone, with the device copy present or wiped. That is the cure; everything
+before it was narrowing.
+
+### Where it lives
+
+An **Appearance** row on Profile, opening the same choice screen as Gender —
+commit on tap, no Save, because a choice cannot be half-made. It sits in a card
+of its own: it is a setting for this device, not a fact about the lifter, and it
+must never travel into `meta/profile`.
+
+The moon in the header stays and still flips in one tap. It now means "override
+with the opposite of what I am looking at", which is what pressing it always
+meant in practice.
+
+### Two things worth keeping
+
+`prefers-color-scheme` is watched rather than sampled, so on System the app
+follows the phone turning over at sunset rather than at the next open.
+
+The boot script in `index.html` and the `useState` initialiser resolve the
+preference by identical rules. If those two ever disagree, the disagreement is
+a repaint — which is the whole bug, reintroduced.

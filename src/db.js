@@ -124,8 +124,10 @@ export async function getStore() {
       }
     }
     if (prefsDoc.exists) {
+      // 'system' is a choice too: it says "follow the phone", which is not the
+      // same as never having chosen.
       const t = (prefsDoc.data() || {}).theme;
-      if (t === 'dark' || t === 'light') state.theme = t;
+      if (t === 'dark' || t === 'light' || t === 'system') state.theme = t;
     }
 
     // An empty store is the signal to migrate what the page is carrying into

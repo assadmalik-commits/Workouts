@@ -284,7 +284,25 @@ export const PROFILE_FIELDS = [
   },
 ];
 
-export const fieldByKey = (key) => PROFILE_FIELDS.find((f) => f.key === key) || null;
+// Not a profile field: it says nothing about who you are, and it must never
+// travel into meta/profile. It is here because it is edited through the same
+// row-and-choice screen as the rest.
+export const APPEARANCE = {
+  key: 'appearance',
+  label: 'Appearance',
+  kind: 'choice',
+  options: ['System', 'Light', 'Dark'],
+  hint: 'System follows your phone. Choosing Light or Dark overrides it for this app.',
+};
+
+export const THEME_PREFS = ['system', 'light', 'dark'];
+export const isThemePref = (v) => THEME_PREFS.includes(v);
+// 'Dark' on screen, 'dark' on the wire.
+export const labelOfPref = (pref) => (isThemePref(pref) ? pref[0].toUpperCase() + pref.slice(1) : 'System');
+export const prefOfLabel = (label) => String(label || '').toLowerCase();
+
+export const fieldByKey = (key) =>
+  key === APPEARANCE.key ? APPEARANCE : PROFILE_FIELDS.find((f) => f.key === key) || null;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_SHAPE = /^\+?[\d\s()-]+$/;

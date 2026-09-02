@@ -11,10 +11,11 @@ import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
   BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf, plausibleHeight, plausibleWeight,
   PROFILE_FIELDS, fieldByKey, validField, invalidReason,
+  APPEARANCE, isThemePref, labelOfPref, prefOfLabel,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.9';
+const APP_VERSION = '9.0';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -427,21 +428,39 @@ export default function WorkoutTracker() {
   const [caughtUp, setCaughtUp] = useState({});
   // Tapping Rest looks at the rest day from any weekday, without moving off it.
   const [restPeek, setRestPeek] = useState(false);
-  const [theme, setTheme] = useState(() => {
-    // Read synchronously, before the first paint, and matching the boot script
-    // in index.html exactly — the two disagreeing is a repaint.
+  // What was chosen: follow the phone, or override it. Read synchronously and
+  // matching the boot script in index.html exactly — the two disagreeing is a
+  // repaint.
+  const [themePref, setThemePref] = useState(() => {
     try {
       const t = JSON.parse(localStorage.getItem('theme'));
       if (t === 'dark' || t === 'light') return t;
     } catch (e) {
-      /* blocked storage falls through to the system setting */
+      /* blocked storage falls through to system */
     }
+    return 'system';
+  });
+  // What the phone is set to, watched rather than sampled: on System the app
+  // has to follow it turning over at sunset, not only at the next open.
+  const [systemDark, setSystemDark] = useState(() => {
     try {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
     } catch (e) {
-      return 'light';
+      return false;
     }
   });
+  useEffect(() => {
+    let mq;
+    try {
+      mq = window.matchMedia('(prefers-color-scheme: dark)');
+    } catch (e) {
+      return undefined;
+    }
+    const follow = (e) => setSystemDark(e.matches);
+    mq.addEventListener('change', follow);
+    return () => mq.removeEventListener('change', follow);
+  }, []);
+  const theme = themePref === 'system' ? (systemDark ? 'dark' : 'light') : themePref;
   const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
@@ -506,8 +525,8 @@ export default function WorkoutTracker() {
       // Nothing is applied unless this device actually chose it. With no
       // choice, the boot script's default stands until the store speaks.
       const deviceTheme = await load('theme', null);
-      const deviceChose = deviceTheme === 'dark' || deviceTheme === 'light';
-      if (deviceChose) setTheme(deviceTheme);
+      const deviceChose = isThemePref(deviceTheme);
+      if (deviceChose) setThemePref(deviceTheme);
       // The block is still good enough to seed an empty store on a first run,
       // which is the only thing it is used for now.
       const storedTheme = deviceChose
@@ -550,7 +569,7 @@ export default function WorkoutTracker() {
         'workout-logs': persistable(migrated),
         'bodyweight-logs': weights,
         profile: normaliseProfile(p),
-        theme: storedTheme === 'dark' || storedTheme === 'light' ? storedTheme : 'light',
+        theme: isThemePref(storedTheme) ? storedTheme : 'system',
       };
       // What the page carries is what it last published, and it now
       // publishes almost never. A session trained out of signal was written to
@@ -570,7 +589,7 @@ export default function WorkoutTracker() {
             if (deviceProfile) local.profile = normaliseProfile(deviceProfile);
           } else if (key === KEY.bodyweight) {
             local['bodyweight-logs'] = deviceBw;
-          } else if (key === KEY.theme && (deviceTheme === 'dark' || deviceTheme === 'light')) {
+          } else if (key === KEY.theme && isThemePref(deviceTheme)) {
             local.theme = deviceTheme;
           }
         }
@@ -597,7 +616,7 @@ export default function WorkoutTracker() {
       setLogs(merged['workout-logs']);
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
-      if (merged.theme === 'dark' || merged.theme === 'light') setTheme(merged.theme);
+      if (isThemePref(merged.theme)) setThemePref(merged.theme);
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
       // write the whole log again.
@@ -965,8 +984,10 @@ export default function WorkoutTracker() {
   };
   publishRef.current = publishAll;
 
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
+  // The preference is what is written down; the resolved theme is a reading of
+  // it and the phone together, and would be wrong on another device.
+  const themeRef = useRef(themePref);
+  themeRef.current = themePref;
 
   // A complete state for the store to write from. writeKeys only touches the
   // keys it is handed, but it reads them all out of one object, so a caller
@@ -1270,12 +1291,15 @@ export default function WorkoutTracker() {
 
   // Remember it on the device straight away, so the switch is instant rather
   // than waiting on the next save.
-  const toggleTheme = () => {
-    const next = theme === 'light' ? 'dark' : 'light';
-    setTheme(next);
-    save('theme', next);
-    flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, next));
+  const applyAppearance = (pref) => {
+    if (!isThemePref(pref)) return;
+    setThemePref(pref);
+    save('theme', pref);
+    flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
   };
+  // The button in the header is a quick override: it sets the opposite of what
+  // is on screen now, whether that came from the phone or from a choice.
+  const toggleTheme = () => applyAppearance(theme === 'light' ? 'dark' : 'light');
 
   useEffect(() => {
     if (!pinned) setDate(today);
@@ -2565,6 +2589,21 @@ export default function WorkoutTracker() {
             })}
           </div>
 
+          <div className="bg-surface border border-line rounded-2xl overflow-hidden">
+            <button
+              onClick={() => openField(APPEARANCE.key)}
+              aria-label={`Edit ${APPEARANCE.label}`}
+              className="w-full flex items-center gap-3 px-4 py-4 text-left"
+            >
+              <span className="text-[15px] font-semibold shrink-0">{APPEARANCE.label}</span>
+              <span className="flex-1 min-w-0 text-[15px] text-right truncate text-dim">
+                {labelOfPref(themePref)}
+                {themePref === 'system' ? ` · ${theme}` : ''}
+              </span>
+              <ChevronRight size={18} className="text-dim shrink-0" />
+            </button>
+          </div>
+
           {/* Your data, which is what this screen is about once the details
               above are set. */}
           {downloader && (
@@ -2619,21 +2658,28 @@ export default function WorkoutTracker() {
             /* A choice cannot be half made or wrong, so there is nothing for a
                Save to confirm. Tapping is the answer. */
             <div className="bg-surface border border-line rounded-2xl overflow-hidden mt-5">
-              {editing.options.map((option, i) => (
-                <button
-                  key={option}
-                  onClick={() => {
-                    commitField(editing.key, option);
-                    closeField();
-                  }}
-                  className={`w-full flex items-center justify-between gap-3 px-4 py-4 text-left ${
-                    i > 0 ? 'border-t border-line' : ''
-                  }`}
-                >
-                  <span className="text-[15px] font-semibold">{option}</span>
-                  {profile[editing.key] === option && <Check size={18} className="text-mint" />}
-                </button>
-              ))}
+              {editing.options.map((option, i) => {
+                const chosen =
+                  editing.key === APPEARANCE.key
+                    ? labelOfPref(themePref) === option
+                    : profile[editing.key] === option;
+                return (
+                  <button
+                    key={option}
+                    onClick={() => {
+                      if (editing.key === APPEARANCE.key) applyAppearance(prefOfLabel(option));
+                      else commitField(editing.key, option);
+                      closeField();
+                    }}
+                    className={`w-full flex items-center justify-between gap-3 px-4 py-4 text-left ${
+                      i > 0 ? 'border-t border-line' : ''
+                    }`}
+                  >
+                    <span className="text-[15px] font-semibold">{option}</span>
+                    {chosen && <Check size={18} className="text-mint" />}
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="mt-5">
