@@ -62,6 +62,14 @@
         }
         d.dataset.appTheme = t;
         d.style.colorScheme = t;
+        // Paint the ground here, not only the attribute. The attribute decides
+        // nothing until our own stylesheet parses, and until then the host's
+        // reset is in force — body{background:#faf9f5}, which is light. That
+        // gap is 26KB of CSS wide and it is the light frame being reported.
+        // An inline style beats the host's rule and needs no stylesheet at all.
+        var ground = t === 'dark' ? '#0b0e14' : '#f2f4f8';
+        d.style.backgroundColor = ground;
+        if (document.body) document.body.style.backgroundColor = ground;
         window.__note('boot', {
           stored: stored,
           cookie: cookie,

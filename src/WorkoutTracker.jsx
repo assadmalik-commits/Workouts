@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.4';
+const APP_VERSION = '9.5';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -1422,6 +1422,13 @@ export default function WorkoutTracker() {
   useEffect(() => {
     document.documentElement.dataset.appTheme = theme;
     document.documentElement.style.colorScheme = theme;
+    // The boot script paints the ground inline, because until the stylesheet
+    // parses the host's light reset is what is showing. Once it has parsed,
+    // that inline value has to go: an inline style outranks the stylesheet, so
+    // leaving it pins the app to whatever the first frame guessed and no theme
+    // change can ever be seen again. The suite caught exactly that.
+    document.documentElement.style.backgroundColor = '';
+    if (document.body) document.body.style.backgroundColor = '';
   }, [theme]);
 
   // Remember it on the device straight away, so the switch is instant rather
