@@ -742,3 +742,86 @@ Two smaller versions of the same fault turned up alongside it:
   suite now reads one `current.html` that the build writes.
 - The `theme` in `live-*.json`, which seeds the embedded block, was hand-carried
   between versions and drifted from the store. It is rebuilt from `read_db` now.
+
+## v9.6 — the theme lives in the page
+
+v9.0 concluded that in this frame there is nowhere durable to read a preference
+from before the first paint, and made System the default so that most opens need
+nothing remembered. That was right, and it was not enough: the lifter runs Dark,
+which is an override, and an override still has to come from somewhere.
+
+Four more versions guessed at where. What settled it was not a theory but a
+trace, read off his own phone through the boot report:
+
+```
+536ms  boot         {"stored":null,"cookie":null,"phone":"light","painted":"light"}
+965ms  device copy  {"present":false,"days":0,"theme":null}
+3244ms store read   {"ok":true,"days":3,"theme":"dark"}
+```
+
+Three facts, none of them arguable:
+
+- **localStorage does not survive the app being closed.** The report from the
+  session before showed the same key holding three days of training. Empty here,
+  full there — so it is the close that takes it, not a quota and not a bug in
+  what writes it.
+- **Cookies are blocked outright.** `cookie:null` on the line immediately after
+  a cookie was written. A cross-origin frame does not get to keep one, whatever
+  the write appears to do.
+- **The store answers at 3.2 seconds.** It holds the right answer. It is a
+  network call, and no amount of ordering makes it arrive before a paint.
+
+### Where a preference can actually live
+
+The page. It survives because it *is* the page: `<meta name="app-theme">`, baked
+at publish time from what the store holds, sitting ahead of the stylesheet where
+the boot script can read it synchronously. Nothing about the frame can take it
+away, because taking it away would mean not loading the app.
+
+The order, in the boot script and in the `useState` initialiser alike, is:
+
+1. **localStorage** — right whenever the app has not been closed since a change.
+2. **The page's bake** — right whenever the page has been published since one.
+3. **`prefers-color-scheme`** — a first open, or a build older than the bake.
+
+Those two places resolving by identical rules is the rule v9.0 already wrote
+down. It was broken once by teaching one of them about a new source and not the
+other, which produced a coin toss I nearly filed as a flaky test.
+
+### The cost, stated plainly
+
+A bake goes stale the moment the preference changes, and stays stale until the
+next publish. That costs **one step on the next open, and one only** — the store
+still wins, a frame late. `tappearance` pins exactly that, both halves: no
+repaint when the bake agrees, exactly one step when it does not.
+
+This is a real trade and worth naming: the app is choosing a one-frame step in a
+rare case over three seconds of the wrong colour in the common one.
+
+### The bug that fell out of writing the test
+
+`readAll` reports `empty` by counting **training days**, deliberately — a store
+holding only a preference is still a first run for the log. But the first-run
+branch pushed the page's state up wholesale and returned, so a store with a real
+preference and no sessions got that preference overwritten by a stale bake — and
+then displayed it for ever, because nothing on that path corrects the theme
+again. It now adopts what the store holds whenever this device has not chosen
+for itself.
+
+Nobody would have found that by reading the code. It surfaced because a fixture
+happened to describe a store with a preference and no sessions.
+
+### Two suites that had gone quietly wrong
+
+- `tcookie` asserted that a cookie carries the theme. That mechanism was removed
+  *because it was measured failing on the phone*, so the suite was asserting the
+  presence of something deliberately deleted. It now tests what actually carries
+  it: the store, and the page the store gets baked into.
+- `tdiscard` modelled "the boot guess" as the phone's setting. The bake is the
+  boot guess now. It reads that value **out of the build under test** rather
+  than having it written down, so it cannot drift the way the version-numbered
+  fixtures did.
+
+Both were fixture drift, not app faults — but a suite that describes a version
+of the app that no longer exists is worth no more than the assertions that
+cannot fail, and is harder to notice.
