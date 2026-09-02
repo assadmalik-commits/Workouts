@@ -14,7 +14,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.8';
+const APP_VERSION = '8.9';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -428,11 +428,16 @@ export default function WorkoutTracker() {
   // Tapping Rest looks at the rest day from any weekday, without moving off it.
   const [restPeek, setRestPeek] = useState(false);
   const [theme, setTheme] = useState(() => {
-    // Read synchronously, before the first paint. The load below is async, so
-    // leaving this to it means rendering one theme and then correcting it.
+    // Read synchronously, before the first paint, and matching the boot script
+    // in index.html exactly — the two disagreeing is a repaint.
     try {
       const t = JSON.parse(localStorage.getItem('theme'));
-      return t === 'dark' || t === 'light' ? t : 'light';
+      if (t === 'dark' || t === 'light') return t;
+    } catch (e) {
+      /* blocked storage falls through to the system setting */
+    }
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     } catch (e) {
       return 'light';
     }

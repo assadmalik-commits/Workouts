@@ -20,7 +20,18 @@
       try {
         var d = document.documentElement;
         var t = JSON.parse(localStorage.getItem('theme'));
-        if (t !== 'dark' && t !== 'light') t = 'light';
+        // iOS discards a cross-origin frame's localStorage when the tab
+        // closes, so "nothing stored" is the normal case on a reopen, not a
+        // first run. Guessing light there repainted every night-mode open;
+        // guessing dark would repaint every day-mode one. The phone's own
+        // setting is the only other thing readable before the first paint, and
+        // it is right far more often than either fixed guess.
+        if (t !== 'dark' && t !== 'light') {
+          t =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        }
         d.dataset.appTheme = t;
         d.style.colorScheme = t;
       } catch (e) {
