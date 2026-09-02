@@ -17,6 +17,15 @@
          sync.js and the artifact build both copy this element through by its
          id, so there is one copy of it and it cannot drift. -->
     <script id="theme-boot">
+      // A record of what actually happened, for the diagnostics panel. Tapping
+      // the version number in the header shows it. Reading a flash off a
+      // recording is guesswork; this is the app saying what it did.
+      window.__trace = [];
+      window.__note = function (step, detail) {
+        try {
+          window.__trace.push({ at: Math.round(performance.now()), step: step, detail: detail });
+        } catch (e) {}
+      };
       try {
         var d = document.documentElement;
         var t = JSON.parse(localStorage.getItem('theme'));
@@ -33,7 +42,13 @@
         }
         d.dataset.appTheme = t;
         d.style.colorScheme = t;
+        window.__note('boot', {
+          stored: localStorage.getItem('theme'),
+          phone: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+          painted: t,
+        });
       } catch (e) {
+        window.__note('boot failed', { error: String(e) });
         document.documentElement.dataset.appTheme = 'light';
         document.documentElement.style.colorScheme = 'light';
       }

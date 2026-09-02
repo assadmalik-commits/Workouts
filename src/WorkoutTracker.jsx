@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.1';
+const APP_VERSION = '9.2';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -317,6 +317,18 @@ const prettyDate = (iso) => {
 // hold the first render for.
 const SLOW_STORE = Symbol('slow-store');
 
+// The app's own account of its boot, shown by tapping the version number. The
+// theme fault took five versions partly because a flash cannot be photographed
+// and every diagnosis was reasoning at a distance. This is the app answering
+// for itself.
+const note = (step, detail) => {
+  try {
+    if (typeof window !== 'undefined' && typeof window.__note === 'function') window.__note(step, detail);
+  } catch (e) {
+    /* diagnostics must never be the thing that breaks */
+  }
+};
+
 const RESUME_KEY = 'resume-session';
 
 const rememberPlace = (place) => {
@@ -486,6 +498,7 @@ export default function WorkoutTracker() {
   const [heightInput, setHeightInput] = useState('');
   const [heightUnlocked, setHeightUnlocked] = useState(false);
   const [exportState, setExportState] = useState(null);
+  const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
   const openedRef = useRef(false);
@@ -520,6 +533,11 @@ export default function WorkoutTracker() {
       const deviceBw = await load('bodyweight-logs', null);
       const deviceProfile = await load('profile', null);
       const deviceHas = deviceLogs !== null || deviceBw !== null || deviceProfile !== null;
+      note('device copy', {
+        present: deviceHas,
+        days: deviceLogs ? Object.keys(deviceLogs).length : 0,
+        theme: await load('theme', null),
+      });
 
       const storePromise = getStore();
       let early = null;
@@ -621,6 +639,7 @@ export default function WorkoutTracker() {
       pendingKeysRef.current = new Set(await load('db-pending', []));
       const store = await storePromise;
       storeRef.current = store;
+      note('store', { answered: Boolean(store) });
       if (!store) return;
       setDurable(true);
 
@@ -655,6 +674,13 @@ export default function WorkoutTracker() {
       }
 
       const read = await store.readAll();
+      note('store read', {
+        ok: read.ok,
+        code: read.code || null,
+        empty: read.ok ? read.empty : null,
+        days: read.ok ? Object.keys(read.state['workout-logs'] || {}).length : 0,
+        theme: read.ok ? read.state.theme : null,
+      });
       if (!read.ok) return;
 
       if (read.empty) {
@@ -675,6 +701,7 @@ export default function WorkoutTracker() {
       setLogs(merged['workout-logs']);
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
+      note('merged', { theme: merged.theme, days: Object.keys(merged['workout-logs'] || {}).length });
       if (isThemePref(merged.theme)) setThemePref(merged.theme);
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
@@ -1578,7 +1605,13 @@ export default function WorkoutTracker() {
               <button onClick={() => setView('profile')} aria-label="Profile">
                 <Avatar profile={profile} size={36} />
               </button>
-              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+              <button
+                onClick={() => setShowDiag((v) => !v)}
+                aria-label="Diagnostics"
+                className="text-xs text-dim nums font-semibold"
+              >
+                v{APP_VERSION}
+              </button>
             </div>
           </div>
           <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
@@ -1699,7 +1732,13 @@ export default function WorkoutTracker() {
               >
                 {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
               </button>
-              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+              <button
+                onClick={() => setShowDiag((v) => !v)}
+                aria-label="Diagnostics"
+                className="text-xs text-dim nums font-semibold"
+              >
+                v{APP_VERSION}
+              </button>
             </div>
           </div>
         </header>
@@ -2827,6 +2866,50 @@ export default function WorkoutTracker() {
           below the bar were clear windows onto the page: an exercise name
           scrolling past landed there razor-sharp between two frosted panels,
           which reads as a mistake rather than as glass. */}
+      {showDiag && (
+        <div className="fixed inset-0 z-40 bg-night/95 overflow-auto px-4 py-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide">
+              Boot report
+            </h2>
+            <button
+              onClick={() => setShowDiag(false)}
+              aria-label="Close diagnostics"
+              className="bg-raised border border-line rounded-xl px-3 py-2 text-[13px] font-bold"
+            >
+              Close
+            </button>
+          </div>
+          <p className="text-[13px] text-dim mb-4">
+            What this copy of the app did when it started. One screenshot of this
+            says more than a recording of the screen.
+          </p>
+          <div className="bg-surface border border-line rounded-2xl p-4 space-y-3 font-mono text-[12px] leading-relaxed break-words">
+            <div>
+              <span className="text-dim">version </span>
+              <span className="font-bold">{APP_VERSION}</span>
+              <span className="text-dim"> · showing </span>
+              <span className="font-bold">{theme}</span>
+              <span className="text-dim"> · preference </span>
+              <span className="font-bold">{themePref}</span>
+            </div>
+            {(typeof window !== 'undefined' ? window.__trace || [] : []).map((row, i) => (
+              <div key={i} className="border-t border-line pt-2">
+                <span className="text-dim">{String(row.at).padStart(5)}ms </span>
+                <span className="font-bold">{row.step}</span>
+                <div className="text-dim">{JSON.stringify(row.detail)}</div>
+              </div>
+            ))}
+            {(typeof window === 'undefined' || !(window.__trace || []).length) && (
+              <div className="text-dim">
+                No boot record. This build predates the report — the version above
+                is not the one that writes it.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {editing === null && (
       <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
         {showSave && (
