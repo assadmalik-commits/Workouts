@@ -26,9 +26,29 @@
           window.__trace.push({ at: Math.round(performance.now()), step: step, detail: detail });
         } catch (e) {}
       };
+      // Two places, because one of them is demonstrably not holding. A boot
+      // report from the lifter's phone showed localStorage keeping three days
+      // of training and losing the theme, so the cookie is a second chance at
+      // an answer that has to be readable before the first paint.
+      window.__cookieTheme = function () {
+        try {
+          var m = document.cookie.match(/(?:^|;\s*)apptheme=([^;]*)/);
+          return m ? decodeURIComponent(m[1]) : null;
+        } catch (e) {
+          return null;
+        }
+      };
       try {
         var d = document.documentElement;
-        var t = JSON.parse(localStorage.getItem('theme'));
+        var stored = null;
+        try {
+          stored = JSON.parse(localStorage.getItem('theme'));
+        } catch (e) {
+          stored = null;
+        }
+        var cookie = window.__cookieTheme();
+        var t = stored;
+        if (t !== 'dark' && t !== 'light' && t !== 'system') t = cookie;
         // 'system' is the default and means "follow the phone", which is the
         // one answer readable before the first paint. It is also what is left
         // when iOS discards this frame's localStorage with the tab — which is
@@ -43,7 +63,8 @@
         d.dataset.appTheme = t;
         d.style.colorScheme = t;
         window.__note('boot', {
-          stored: localStorage.getItem('theme'),
+          stored: stored,
+          cookie: cookie,
           phone: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
           painted: t,
         });

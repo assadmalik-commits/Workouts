@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.3';
+const APP_VERSION = '9.4';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -321,6 +321,25 @@ const SLOW_STORE = Symbol('slow-store');
 // theme fault took five versions partly because a flash cannot be photographed
 // and every diagnosis was reasoning at a distance. This is the app answering
 // for itself.
+// Kept beside the device copy, and read by the boot script when that copy has
+// nothing. A year, and marked for a cross-origin frame or the browser will not
+// keep it at all.
+const rememberTheme = (pref) => {
+  try {
+    document.cookie =
+      'apptheme=' + encodeURIComponent(pref) + '; max-age=31536000; path=/; SameSite=None; Secure';
+  } catch (e) {
+    /* a browser refusing cookies is not a reason to fail a theme change */
+  }
+};
+const readThemeCookie = () => {
+  try {
+    return typeof window.__cookieTheme === 'function' ? window.__cookieTheme() : null;
+  } catch (e) {
+    return null;
+  }
+};
+
 const note = (step, detail) => {
   try {
     if (typeof window !== 'undefined' && typeof window.__note === 'function') window.__note(step, detail);
@@ -448,13 +467,20 @@ export default function WorkoutTracker() {
   // matching the boot script in index.html exactly — the two disagreeing is a
   // repaint.
   const [themePref, setThemePref] = useState(() => {
+    // Both places, in the same order as the boot script. Reading only one of
+    // them here is what made the second open a coin toss: the script painted
+    // dark from the cookie, React started at system, resolved it against a
+    // light phone, and painted over it before the load could put it back.
+    // These two disagreeing is a repaint — the rule this file already carries,
+    // broken the moment a second place to look was added to one of them.
     try {
       const t = JSON.parse(localStorage.getItem('theme'));
-      if (t === 'dark' || t === 'light') return t;
+      if (isThemePref(t)) return t;
     } catch (e) {
-      /* blocked storage falls through to system */
+      /* blocked storage falls through to the cookie */
     }
-    return 'system';
+    const cookie = readThemeCookie();
+    return isThemePref(cookie) ? cookie : 'system';
   });
   // What the phone is set to, watched rather than sampled: on System the app
   // has to follow it turning over at sunset, not only at the next open.
@@ -601,7 +627,9 @@ export default function WorkoutTracker() {
       //
       // Nothing is applied unless this device actually chose it. With no
       // choice, the boot script's default stands until the store speaks.
-      const deviceTheme = await load('theme', null);
+      // The cookie stands in when the device copy has lost it.
+      const savedTheme = await load('theme', null);
+      const deviceTheme = isThemePref(savedTheme) ? savedTheme : readThemeCookie();
       const deviceChose = isThemePref(deviceTheme);
       if (deviceChose) setThemePref(deviceTheme);
       // The block is still good enough to seed an empty store on a first run,
@@ -712,6 +740,17 @@ export default function WorkoutTracker() {
         // copy holding three days of training and a theme of null, against a
         // store that had said "dark" all along.
         if (merged.theme !== deviceTheme) save('theme', merged.theme);
+        rememberTheme(merged.theme);
+        // Read both back rather than assume the write took. If the next report
+        // still shows nothing here, it is the writing that is failing and not
+        // the reading, and that is worth knowing without another day of it.
+        let readBack = null;
+        try {
+          readBack = localStorage.getItem('theme');
+        } catch (e) {
+          readBack = 'threw: ' + String(e);
+        }
+        note('wrote theme', { wanted: merged.theme, localStorage: readBack, cookie: readThemeCookie() });
       }
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
@@ -1391,6 +1430,7 @@ export default function WorkoutTracker() {
     if (!isThemePref(pref)) return;
     setThemePref(pref);
     save('theme', pref);
+    rememberTheme(pref);
     flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
   };
   // The button in the header is a quick override: it sets the opposite of what
