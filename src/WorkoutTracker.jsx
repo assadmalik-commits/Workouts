@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.2';
+const APP_VERSION = '9.3';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -702,7 +702,17 @@ export default function WorkoutTracker() {
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
       note('merged', { theme: merged.theme, days: Object.keys(merged['workout-logs'] || {}).length });
-      if (isThemePref(merged.theme)) setThemePref(merged.theme);
+      if (isThemePref(merged.theme)) {
+        setThemePref(merged.theme);
+        // And write it down. Without this the device never learns what the
+        // store already knows, so the boot script finds nothing on every open
+        // and the theme is re-learned from the store each time — which on a
+        // phone is not a flash but a second and a half of the wrong colour,
+        // repeating for ever. The boot report showed exactly that: a device
+        // copy holding three days of training and a theme of null, against a
+        // store that had said "dark" all along.
+        if (merged.theme !== deviceTheme) save('theme', merged.theme);
+      }
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
       // write the whole log again.
