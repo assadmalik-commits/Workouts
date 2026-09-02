@@ -825,3 +825,73 @@ happened to describe a store with a preference and no sessions.
 Both were fixture drift, not app faults — but a suite that describes a version
 of the app that no longer exists is worth no more than the assertions that
 cannot fail, and is harder to notice.
+
+## v9.7 — the app rebakes its own page
+
+v9.6 put the theme in the page and called the cost "one step, and only one".
+That was true of the *shape* of the step and false about how often it happens.
+Three consecutive opens, his state exactly:
+
+```
+open 1: page baked dark · frames dark -> light · settles light
+open 2: page baked dark · frames dark -> light · settles light
+open 3: page baked dark · frames dark -> light · settles light
+```
+
+The bake is only written when the page is published. The app deliberately never
+publishes — that is the guard on `publishAll`, and it is right. So a preference
+changed in the app disagrees with the page **for ever**, and the step repeats on
+every open until someone publishes by hand. The mistake was measuring one open
+and generalising from it: the same shape as an assertion that cannot fail,
+wearing different clothes.
+
+### The fix
+
+Changing the Appearance rewrites the page. `rebakeAppearance` publishes with the
+new theme baked in, so the next open — and every open after — paints once.
+
+This is the one deliberate exception to "a save must never republish", and it is
+worth being precise about why it is not that rule being loosened:
+
+- It is not a save. It is a change to **how the page itself is written**, which
+  is the only kind of change a republish exists to carry.
+- It fires from the Appearance screen, where nothing is being logged, so the
+  reload costs the position of a screen the lifter is about to leave anyway.
+- It is paid **once per change** instead of once per open, and he changes his
+  appearance far less often than he opens the app.
+
+`publishAll` keeps its guard untouched. The rebake is a separate function with
+its own, and refuses in three cases: before the store has answered (publishing
+writes `#log-data`, and a half-loaded state would bake a partial record into the
+page), with no publisher, and when the page already carries the value asked for.
+That last one matters — without it, tapping the option already in force would
+reload every open view to change nothing, which is exactly what the guard on
+`publishAll` exists to prevent.
+
+### And a shorter step for the cases it cannot cover
+
+The rebake can fail: out of signal, or a publish that conflicts. So the store
+read was split. `readTheme` fetches `meta/prefs` alone, ahead of the record —
+on his phone the full `readAll` took 3.2 seconds because it waits on every
+training day, the profile and a 36KB photo. The preference is one small
+document, and it is the only part anyone can *see* is wrong while they wait.
+
+Belt and braces, and they fail independently: the rebake makes the common case
+have no step at all, the early read makes every remaining case short.
+
+### What went wrong in the suites, again
+
+Three suites failed the moment the bake changed from dark to light — `tlive`,
+`tlearn`, `tcookie` — all seeding a dark store against a light-baked page. Not
+app faults: each was silently testing a **stale bake** under the name of
+something else.
+
+The lesson is now in `bake.mjs`: **which bake a scenario runs against is part of
+the scenario**, not a constant. It swaps the attribute in the bytes of the build
+under test rather than writing a page of its own, for the reason `tdb` ran
+against v8.1 for four versions — a fixture written by hand is a fixture that can
+stop describing the app without anyone noticing.
+
+`tlive` was also corrected to hold `light`, read back off the artifact rather
+than written from memory. Its whole job is to mirror the live store, and a
+mirror that has drifted is worse than no mirror.

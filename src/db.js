@@ -180,7 +180,20 @@ export async function getStore() {
     return { written, failed };
   }
 
-  return { readAll, writeKeys };
+  // The theme alone, ahead of everything else. readAll waits on the whole
+  // record — every training day, the profile, the photo — and on the lifter's
+  // phone that took 3.2 seconds. The preference is one small document, and it
+  // is the only thing anyone can see is wrong while they wait, so it gets
+  // fetched on its own and applied the moment it lands.
+  async function readTheme() {
+    const doc = await once(() => db.doc('meta/prefs').get());
+    if (!doc.ok) return null;
+    if (!doc.value.exists) return null;
+    const t = (doc.value.data() || {}).theme;
+    return t === 'dark' || t === 'light' || t === 'system' ? t : null;
+  }
+
+  return { readAll, readTheme, writeKeys };
 }
 
 // Which keys differ between two states. The debounced save knows a record

@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.6';
+const APP_VERSION = '9.7';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -520,6 +520,9 @@ export default function WorkoutTracker() {
   const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
+  // Set once the store has answered and what is on screen is the whole record.
+  // Only a rebake reads it, and only to refuse to write a partial page.
+  const recordSettledRef = useRef(false);
   const openedRef = useRef(false);
   // The store, once it answers, and the keys this device has written down but
   // has not yet got into it. That set is what lets a session trained out of
@@ -664,6 +667,24 @@ export default function WorkoutTracker() {
       if (!store) return;
       setDurable(true);
 
+      // The theme, ahead of the record. Whatever is on screen right now came
+      // off the page's bake, which is only as fresh as the last publish — so
+      // if the lifter has changed the setting since, this is the soonest the
+      // app can know. It is one small document rather than the whole log: on
+      // the phone that is the difference between correcting the colour in
+      // under a second and correcting it after three.
+      //
+      // Only when this device has not chosen for itself. A choice made here
+      // outranks the store until it has been written up, which is what the
+      // pending set is for.
+      if (!deviceChose && typeof store.readTheme === 'function') {
+        const early = await store.readTheme();
+        if (isThemePref(early)) {
+          setThemePref(early);
+          note('early theme', { theme: early });
+        }
+      }
+
       const local = {
         'workout-logs': persistable(migrated),
         'bodyweight-logs': weights,
@@ -722,6 +743,7 @@ export default function WorkoutTracker() {
           note('adopted theme from an empty store', { theme: read.state.theme });
         }
         await flushRef.current?.(changedKeys({}, local), local);
+        recordSettledRef.current = true;
         return;
       }
 
@@ -761,6 +783,9 @@ export default function WorkoutTracker() {
       savedProfileRef.current = JSON.stringify(normaliseProfile(merged.profile));
       // Whatever this device contributed to that merge still has to get up.
       await flushRef.current?.(changedKeys(read.state, merged), merged);
+      // From here the state on screen is the whole record, so a page written
+      // from it would be a complete one. Nothing may republish before this.
+      recordSettledRef.current = true;
     })();
   }, [load, save, setReady]);
 
@@ -1433,6 +1458,39 @@ export default function WorkoutTracker() {
     if (document.body) document.body.style.backgroundColor = '';
   }, [theme]);
 
+  // The page carries the theme baked into it, and that bake is only as fresh
+  // as the last publish. Nothing else refreshes it — the store is the record
+  // and a save deliberately does not republish — so a preference changed here
+  // would disagree with the page for ever, and every open would paint the old
+  // colour before correcting itself. Measured on the lifter's phone: not one
+  // step, a step on every open, indefinitely.
+  //
+  // So changing the appearance rewrites the page. This is the one deliberate
+  // exception to "a save must never republish", and it is not a save: it is a
+  // change to how the page itself is written, made from a screen where nothing
+  // is being logged. The reload it causes is the cost, and it is paid once per
+  // change rather than once per open.
+  const rebakeAppearance = async (pref) => {
+    // Not before the store has answered. Publishing writes the whole document
+    // including the embedded block, and doing that from a half-loaded state
+    // would bake a partial record into the page.
+    if (!recordSettledRef.current) return false;
+    const publish = publisherRef.current;
+    if (!publish) return false;
+    // The page already says this. Publishing would reload every open view to
+    // change nothing, which is the thing the guard on publishAll exists to
+    // prevent.
+    if (readPageTheme() === pref) return false;
+    const res = await publish({
+      'workout-logs': persistable(logsRef.current),
+      'bodyweight-logs': bwRef.current,
+      profile: profileRef.current,
+      theme: pref,
+    });
+    note('rebaked the page', { theme: pref, ok: res.ok, reason: res.reason || null });
+    return res.ok;
+  };
+
   // Remember it on the device straight away, so the switch is instant rather
   // than waiting on the next save.
   const applyAppearance = (pref) => {
@@ -1440,6 +1498,10 @@ export default function WorkoutTracker() {
     setThemePref(pref);
     save('theme', pref);
     flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
+    // The store first, then the page. If this device goes out of signal
+    // between the two the store still has the answer and the next open costs
+    // one short step, not a wrong colour that never resolves.
+    rebakeAppearance(pref);
   };
   // The button in the header is a quick override: it sets the opposite of what
   // is on screen now, whether that came from the phone or from a choice.
