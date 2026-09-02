@@ -530,3 +530,27 @@ The self-publish fallback in `sync.js` stays until the store has been proven in
 the lifter's own hands. A week of real sessions is that proof. If saving never
 reloads the app and nothing goes missing, the fallback and the embedded block
 can go and the page becomes only an app.
+
+### The export nudge (queued with stable IDs)
+
+Asked for September 2026. The store is the record and writes itself, so the
+export is not a per-session chore — it guards a different class of loss: the
+artifact deleted, the account gone, or simply wanting the history outside
+Claude. Once a month is the right cadence at six sessions a week, and nobody
+should have to remember it.
+
+Shape:
+
+- `meta/prefs` already exists for the theme; `lastExportAt` belongs there, and
+  in the device copy alongside it.
+- Stamped only on a **successful** export. `downloads.save()` rejects with
+  `declined` when the lifter dismisses the sheet, and a dismissal is an answer,
+  not a backup — it must not reset the clock.
+- Shown when there is no `lastExportAt` at all, or it is more than 30 days old.
+- A quiet line on Profile, above the Export button. Not a banner on Home: that
+  screen is used mid-set with a barbell waiting, and nothing belongs there that
+  is not the session. If it turns out to be too easy to miss, the next step is a
+  mark on the Profile tab, not a louder Profile.
+
+It has nothing to do with exercise IDs and could ship on its own; it is bundled
+with them because that is the next time the app is opened for work.
