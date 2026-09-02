@@ -70,6 +70,9 @@ function buildDocument(state) {
     // var(--color-night) unconditionally and the light palette is what
     // data-app-theme switches on, so a stylesheet that applies before the
     // attribute is set paints one dark frame at every open.
+    // Readable before the first paint and part of the page itself, which is the
+    // only thing in this frame that survives a close.
+    `<meta name="app-theme" content="${state.theme === 'dark' ? 'dark' : state.theme === 'light' ? 'light' : 'system'}">`,
     boot ? '<script id="' + BOOT_ID + '">' + boot.textContent + '<\/script>' : '',
     '<style id="' + CSS_ID + '">' + css.textContent + '</style>',
     '</head>',

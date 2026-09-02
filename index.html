@@ -26,14 +26,19 @@
           window.__trace.push({ at: Math.round(performance.now()), step: step, detail: detail });
         } catch (e) {}
       };
-      // Two places, because one of them is demonstrably not holding. A boot
-      // report from the lifter's phone showed localStorage keeping three days
-      // of training and losing the theme, so the cookie is a second chance at
-      // an answer that has to be readable before the first paint.
-      window.__cookieTheme = function () {
+      // Where the theme can be read before anything paints.
+      //
+      // Storage was tried and does not survive the app being closed on iOS: one
+      // boot report showed three days of training in it, the next showed it
+      // empty. Cookies were tried and are blocked outright in a cross-origin
+      // frame — the report showed one written and unreadable on the very next
+      // line. What is left is the page itself, which survives because it IS the
+      // page, and is a better guess than the phone's setting for anyone whose
+      // choice differs from it.
+      window.__pageTheme = function () {
         try {
-          var m = document.cookie.match(/(?:^|;\s*)apptheme=([^;]*)/);
-          return m ? decodeURIComponent(m[1]) : null;
+          var m = document.querySelector('meta[name="app-theme"]');
+          return m ? m.getAttribute('content') : null;
         } catch (e) {
           return null;
         }
@@ -46,14 +51,13 @@
         } catch (e) {
           stored = null;
         }
-        var cookie = window.__cookieTheme();
+        var page = window.__pageTheme();
         var t = stored;
-        if (t !== 'dark' && t !== 'light' && t !== 'system') t = cookie;
-        // 'system' is the default and means "follow the phone", which is the
-        // one answer readable before the first paint. It is also what is left
-        // when iOS discards this frame's localStorage with the tab — which is
-        // every reopen, and why an app-held preference could never be trusted
-        // to be there.
+        if (t !== 'dark' && t !== 'light' && t !== 'system') t = page;
+        // 'system' means "follow the phone", so it resolves here rather than
+        // being painted. This is also the last fallback: nothing was stored,
+        // and the page carries no bake either — a first open, or a build that
+        // predates the bake. The phone's own setting is the best guess left.
         if (t !== 'dark' && t !== 'light') {
           t =
             window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -72,7 +76,7 @@
         if (document.body) document.body.style.backgroundColor = ground;
         window.__note('boot', {
           stored: stored,
-          cookie: cookie,
+          page: page,
           phone: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
           painted: t,
         });

@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.5';
+const APP_VERSION = '9.6';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -321,20 +321,13 @@ const SLOW_STORE = Symbol('slow-store');
 // theme fault took five versions partly because a flash cannot be photographed
 // and every diagnosis was reasoning at a distance. This is the app answering
 // for itself.
-// Kept beside the device copy, and read by the boot script when that copy has
-// nothing. A year, and marked for a cross-origin frame or the browser will not
-// keep it at all.
-const rememberTheme = (pref) => {
+// The theme baked into the page at publish time. Not a preference the app can
+// write — it is the only thing in this frame readable before the first paint
+// that outlives the app being closed. Storage does not, and cookies are blocked;
+// both were measured failing on the lifter's own phone rather than assumed.
+const readPageTheme = () => {
   try {
-    document.cookie =
-      'apptheme=' + encodeURIComponent(pref) + '; max-age=31536000; path=/; SameSite=None; Secure';
-  } catch (e) {
-    /* a browser refusing cookies is not a reason to fail a theme change */
-  }
-};
-const readThemeCookie = () => {
-  try {
-    return typeof window.__cookieTheme === 'function' ? window.__cookieTheme() : null;
+    return typeof window.__pageTheme === 'function' ? window.__pageTheme() : null;
   } catch (e) {
     return null;
   }
@@ -479,8 +472,8 @@ export default function WorkoutTracker() {
     } catch (e) {
       /* blocked storage falls through to the cookie */
     }
-    const cookie = readThemeCookie();
-    return isThemePref(cookie) ? cookie : 'system';
+    const page = readPageTheme();
+    return isThemePref(page) ? page : 'system';
   });
   // What the phone is set to, watched rather than sampled: on System the app
   // has to follow it turning over at sunset, not only at the next open.
@@ -629,7 +622,7 @@ export default function WorkoutTracker() {
       // choice, the boot script's default stands until the store speaks.
       // The cookie stands in when the device copy has lost it.
       const savedTheme = await load('theme', null);
-      const deviceTheme = isThemePref(savedTheme) ? savedTheme : readThemeCookie();
+      const deviceTheme = isThemePref(savedTheme) ? savedTheme : null;
       const deviceChose = isThemePref(deviceTheme);
       if (deviceChose) setThemePref(deviceTheme);
       // The block is still good enough to seed an empty store on a first run,
@@ -715,6 +708,19 @@ export default function WorkoutTracker() {
         // First run against an empty store: what the page is carrying moves
         // into it, and the embedded block stops being the record and becomes
         // a backup of it.
+        //
+        // A preference is not a log, though. An empty store can still hold one
+        // — 'empty' counts training days, deliberately — and the theme this
+        // app booted with came off the page, which is a cache of the store and
+        // never a choice made here. Writing local's theme up regardless would
+        // overwrite a real preference with a stale bake, and leave the app
+        // showing it for ever: on this path nothing else ever corrects it.
+        if (!deviceChose && isThemePref(read.state.theme)) {
+          local.theme = read.state.theme;
+          setThemePref(read.state.theme);
+          if (read.state.theme !== deviceTheme) save('theme', read.state.theme);
+          note('adopted theme from an empty store', { theme: read.state.theme });
+        }
         await flushRef.current?.(changedKeys({}, local), local);
         return;
       }
@@ -740,17 +746,13 @@ export default function WorkoutTracker() {
         // copy holding three days of training and a theme of null, against a
         // store that had said "dark" all along.
         if (merged.theme !== deviceTheme) save('theme', merged.theme);
-        rememberTheme(merged.theme);
-        // Read both back rather than assume the write took. If the next report
-        // still shows nothing here, it is the writing that is failing and not
-        // the reading, and that is worth knowing without another day of it.
         let readBack = null;
         try {
           readBack = localStorage.getItem('theme');
         } catch (e) {
           readBack = 'threw: ' + String(e);
         }
-        note('wrote theme', { wanted: merged.theme, localStorage: readBack, cookie: readThemeCookie() });
+        note('wrote theme', { wanted: merged.theme, localStorage: readBack, page: readPageTheme() });
       }
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
@@ -1437,7 +1439,6 @@ export default function WorkoutTracker() {
     if (!isThemePref(pref)) return;
     setThemePref(pref);
     save('theme', pref);
-    rememberTheme(pref);
     flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
   };
   // The button in the header is a quick override: it sets the opposite of what
