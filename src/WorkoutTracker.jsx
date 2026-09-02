@@ -14,7 +14,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.7';
+const APP_VERSION = '8.8';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -490,17 +490,26 @@ export default function WorkoutTracker() {
       setBwLogs(weights);
       setProfile(normaliseProfile(p));
 
-      // The theme is the one thing the embedded block must not win: it is a
-      // snapshot of what was true when the page was last published, while the
-      // device holds what this phone was actually last set to.
+      // The theme is the one thing the embedded block must never decide. It is
+      // frozen at whatever was true when the page was last published, and on
+      // iOS the device copy it would be standing in for is exactly what gets
+      // lost: Safari discards a cross-origin frame's localStorage when the tab
+      // closes. So on the next open there is no device choice, the block says
+      // something months old, and applying it repaints the whole app in the
+      // wrong theme until the store answers a second later.
+      //
+      // Nothing is applied unless this device actually chose it. With no
+      // choice, the boot script's default stands until the store speaks.
       const deviceTheme = await load('theme', null);
-      const storedTheme =
-        deviceTheme === 'dark' || deviceTheme === 'light'
-          ? deviceTheme
-          : hasEmbeddedData(embedded)
-            ? embedded.theme
-            : null;
-      if (storedTheme === 'dark' || storedTheme === 'light') setTheme(storedTheme);
+      const deviceChose = deviceTheme === 'dark' || deviceTheme === 'light';
+      if (deviceChose) setTheme(deviceTheme);
+      // The block is still good enough to seed an empty store on a first run,
+      // which is the only thing it is used for now.
+      const storedTheme = deviceChose
+        ? deviceTheme
+        : hasEmbeddedData(embedded)
+          ? embedded.theme
+          : null;
 
       setReady(true);
       if (changed) save('workout-logs', migrated);
@@ -578,7 +587,7 @@ export default function WorkoutTracker() {
       // outstanding — but changedKeys below still writes it up if the store
       // disagrees, which quietly corrects a stale row.
       const heldForMerge = new Set(pendingKeysRef.current);
-      if (deviceTheme === 'dark' || deviceTheme === 'light') heldForMerge.add(KEY.theme);
+      if (deviceChose) heldForMerge.add(KEY.theme);
       const merged = mergeState(local, read.state, heldForMerge);
       setLogs(merged['workout-logs']);
       setBwLogs(merged['bodyweight-logs']);
