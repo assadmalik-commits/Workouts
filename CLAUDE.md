@@ -47,6 +47,21 @@ the lifter. It is only reachable out of signal, which is where its test has to
 live: with a healthy store the Save button disables itself the moment the write
 confirms, so nothing can be caught there.
 
+There is exactly one deliberate exception, and it is not a save. The theme is
+baked into the page because nothing else in that frame survives a close, and
+only a publish can refresh that bake — so changing the Appearance rewrites the
+page. `rebakeAppearance` has its own guards and never touches `publishAll`'s: it
+refuses before the store has answered, with no publisher, and when the page
+already carries the value asked for. It fires when the app is **hidden**, never
+on the tap; publishing under the lifter's finger is a flicker a second after
+they chose, which is what they were trying to stop.
+
+**The published page can be newer than this repo.** Since that rebake exists,
+the app publishes on its own, and the block in the live page can hold a weigh-in
+or a profile field no fixture here has. Build a release from the live page's
+block, not from a local `live-*.json`, and if a publish is refused as behind,
+merge onto what came back and check the merge field by field — never resend.
+
 **Opening an exercise is not an edit.** It adds a blank set so there is a row to
 type into. Compare `persistable(logs)` — filled sets only — to decide whether
 anything actually changed, or merely browsing the plan will republish the page.
