@@ -251,6 +251,12 @@ export function mergeState(local, remote, pending) {
   if (held.has(KEY.bodyweight) || !remote['bodyweight-logs']?.length) {
     merged['bodyweight-logs'] = local['bodyweight-logs'] || [];
   }
+  // Dark or light is a preference of the device in your hand. The caller marks
+  // the theme held when this phone has actually chosen one, and then that beats
+  // the store — which may hold what another view chose, or what was true when
+  // the page was last published. A device that has never chosen takes the
+  // store's, so a fresh one starts somewhere sensible rather than on whatever
+  // the publish froze.
   if (held.has(KEY.theme) || !remote.theme) merged.theme = local.theme ?? remote.theme;
 
   return merged;

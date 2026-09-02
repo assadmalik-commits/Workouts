@@ -14,7 +14,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.4';
+const APP_VERSION = '8.5';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -427,7 +427,16 @@ export default function WorkoutTracker() {
   const [caughtUp, setCaughtUp] = useState({});
   // Tapping Rest looks at the rest day from any weekday, without moving off it.
   const [restPeek, setRestPeek] = useState(false);
-  const [theme, setTheme] = useState('light');
+  const [theme, setTheme] = useState(() => {
+    // Read synchronously, before the first paint. The load below is async, so
+    // leaving this to it means rendering one theme and then correcting it.
+    try {
+      const t = JSON.parse(localStorage.getItem('theme'));
+      return t === 'dark' || t === 'light' ? t : 'light';
+    } catch (e) {
+      return 'light';
+    }
+  });
   const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
@@ -481,9 +490,16 @@ export default function WorkoutTracker() {
       setBwLogs(weights);
       setProfile(normaliseProfile(p));
 
-      const storedTheme = hasEmbeddedData(embedded)
-        ? embedded.theme
-        : await load('theme', null);
+      // The theme is the one thing the embedded block must not win: it is a
+      // snapshot of what was true when the page was last published, while the
+      // device holds what this phone was actually last set to.
+      const deviceTheme = await load('theme', null);
+      const storedTheme =
+        deviceTheme === 'dark' || deviceTheme === 'light'
+          ? deviceTheme
+          : hasEmbeddedData(embedded)
+            ? embedded.theme
+            : null;
       if (storedTheme === 'dark' || storedTheme === 'light') setTheme(storedTheme);
 
       setReady(true);
@@ -557,7 +573,13 @@ export default function WorkoutTracker() {
         return;
       }
 
-      const merged = mergeState(local, read.state, pendingKeysRef.current);
+      // A theme this device has actually chosen is held for the merge, so it
+      // outranks the store. Not added to the pending set itself — nothing is
+      // outstanding — but changedKeys below still writes it up if the store
+      // disagrees, which quietly corrects a stale row.
+      const heldForMerge = new Set(pendingKeysRef.current);
+      if (deviceTheme === 'dark' || deviceTheme === 'light') heldForMerge.add(KEY.theme);
+      const merged = mergeState(local, read.state, heldForMerge);
       setLogs(merged['workout-logs']);
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
