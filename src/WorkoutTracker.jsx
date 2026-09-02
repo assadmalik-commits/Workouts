@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.7';
+const APP_VERSION = '9.8';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -520,6 +520,9 @@ export default function WorkoutTracker() {
   const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
+  // The page's baked theme disagrees with the preference in force, so the page
+  // needs rewriting before the next open. Read only on the way out.
+  const bakeStaleRef = useRef(false);
   // Set once the store has answered and what is on screen is the whole record.
   // Only a rebake reads it, and only to refuse to write a partial page.
   const recordSettledRef = useRef(false);
@@ -786,6 +789,15 @@ export default function WorkoutTracker() {
       // From here the state on screen is the whole record, so a page written
       // from it would be a complete one. Nothing may republish before this.
       recordSettledRef.current = true;
+      // And if the page is still carrying an older answer than the one now in
+      // force — a rebake that never ran because the app was force-quit, or was
+      // out of signal when it did — mark it so leaving this time rewrites it.
+      // Without this the page waits for another tap to heal, which is a step on
+      // every open until the lifter happens to change the setting again.
+      if (isThemePref(merged.theme) && readPageTheme() !== merged.theme) {
+        bakeStaleRef.current = true;
+        note('bake is stale', { page: readPageTheme(), inForce: merged.theme });
+      }
     })();
   }, [load, save, setReady]);
 
@@ -1124,6 +1136,7 @@ export default function WorkoutTracker() {
   };
 
   const publishRef = useRef(null);
+  const rebakeRef = useRef(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
   // Every publish rewrites the whole page, so it carries everything — passing
@@ -1275,6 +1288,10 @@ export default function WorkoutTracker() {
       // Anything the store still has not taken goes up now: back in signal
       // and closing the app is the last chance the page gets.
       flushRef.current?.([...pendingKeysRef.current], stateOf(record));
+      // The appearance changed while this view was open, so the page it was
+      // loaded from is baked to the old one. Rewrite it now: the reload lands
+      // on a hidden view, and the next open paints once.
+      if (bakeStaleRef.current) rebakeRef.current?.(themeRef.current);
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
       setPending(false);
@@ -1487,9 +1504,12 @@ export default function WorkoutTracker() {
       profile: profileRef.current,
       theme: pref,
     });
+    if (res.ok) bakeStaleRef.current = false;
     note('rebaked the page', { theme: pref, ok: res.ok, reason: res.reason || null });
     return res.ok;
   };
+  // The hide handler is bound once and must not close over a stale copy.
+  rebakeRef.current = rebakeAppearance;
 
   // Remember it on the device straight away, so the switch is instant rather
   // than waiting on the next save.
@@ -1498,10 +1518,12 @@ export default function WorkoutTracker() {
     setThemePref(pref);
     save('theme', pref);
     flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
-    // The store first, then the page. If this device goes out of signal
-    // between the two the store still has the answer and the next open costs
-    // one short step, not a wrong colour that never resolves.
-    rebakeAppearance(pref);
+    // The store now; the page on the way out. Republishing reloads the view,
+    // and doing that under the lifter's finger is a flicker a second after they
+    // tapped — the thing they came to this screen to stop. Held until the app
+    // is hidden, the same reload lands while nobody is looking, and what they
+    // come back to is a correctly baked page.
+    bakeStaleRef.current = true;
   };
   // The button in the header is a quick override: it sets the opposite of what
   // is on screen now, whether that came from the phone or from a choice.

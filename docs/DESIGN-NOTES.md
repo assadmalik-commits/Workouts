@@ -895,3 +895,49 @@ stop describing the app without anyone noticing.
 `tlive` was also corrected to hold `light`, read back off the artifact rather
 than written from memory. Its whole job is to mirror the live store, and a
 mirror that has drifted is worse than no mirror.
+
+### v9.8 — and not under his finger
+
+The rebake worked and was in the wrong place. Publishing on the tap meant a
+reload about a second after choosing Light or Dark: a flicker on the very screen
+the lifter had opened to stop one.
+
+It now waits. `applyAppearance` marks the bake stale; the rewrite happens in the
+handler that already runs when the app is hidden, beside the flush that was
+always there. Same guarantee, and the reload lands on a view nobody is looking
+at — what he comes back to is a page already baked correctly.
+
+The load path marks it stale too, when the page carries an older answer than the
+one in force. Without that, a rebake missed because the app was force-quit or
+out of signal would wait for another tap to heal, which is a step on every open
+until he happens to change the setting again.
+
+`trebake` now pins both halves, and the first one fails on the shipped v9.7 for
+exactly the reported reason:
+
+```
+FAIL - nothing republishes under his finger   [publishes 1]
+PASS - the page is rewritten on the way out   [published]
+```
+
+### The publish conflict, which was the feature working
+
+Publishing v9.8 was refused: a newer version had been saved from inside the page
+at 21:46. That was his own app rebaking itself after he switched back to Dark —
+the v9.7 feature doing its job. His page held a fresher record than the fixture
+here: an email, a mobile and a 2 September weigh-in that `live-v83.json` never
+had.
+
+So the release was rebuilt on **his** published state rather than the local
+fixture, and the merge checked field by field before publishing:
+
+```
+kept  workout-logs   kept  bodyweight-logs   kept  profile   kept  theme
+photo identical: true
+```
+
+Worth writing down, because it is now a standing condition: **the page can be
+newer than anything here.** The app publishes on its own when the appearance
+changes, so a local fixture is a snapshot that goes stale the moment he taps.
+Always rebuild the release from the live page's block, never from the fixture,
+and never resend a document that a refusal has already told you is behind.
