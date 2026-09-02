@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
-  Home, Flame, Activity, User, Camera, Download,
+  Home, Flame, Activity, User, Camera, Download, ChevronRight, ChevronLeft, X, Lock,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
@@ -10,10 +10,11 @@ import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
   BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf, plausibleHeight, plausibleWeight,
+  PROFILE_FIELDS, fieldByKey, validField, invalidReason,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.2';
+const APP_VERSION = '8.3';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -437,6 +438,16 @@ export default function WorkoutTracker() {
   // has reached the page it lives in.
   const [pending, setPending] = useState(false);
   const [photoError, setPhotoError] = useState(null);
+  // Which identity field has been opened for editing, and the value being
+  // typed. The draft lives here rather than in `profile`, so backing out
+  // discards it and nothing is written on the way.
+  const [editField, setEditField] = useState(null);
+  const [draft, setDraft] = useState('');
+  // Height sits on Stats beside the weight it is measured against, and it is
+  // set once, so it locks the way anything set-once next to a live control
+  // should.
+  const [heightInput, setHeightInput] = useState('');
+  const [heightUnlocked, setHeightUnlocked] = useState(false);
   const [exportState, setExportState] = useState(null);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
@@ -1058,6 +1069,14 @@ export default function WorkoutTracker() {
     };
   }, [save]);
 
+  // Height shows what is on record, so "locked until changed" means something:
+  // against an empty box every value differs, and the Save would sit lit from
+  // the moment the screen opened.
+  useEffect(() => {
+    if (!ready) return;
+    setHeightInput(String(profile.heightCm || ''));
+  }, [ready, profile.heightCm]);
+
   const saveLogs = async () => {
     const record = persistable(logs);
     const previous = savedRef.current;
@@ -1084,50 +1103,56 @@ export default function WorkoutTracker() {
   // Saving the profile also files the weight against today, so the record of
   // what the lifter weighed keeps its dates without asking them to log it in a
   // second place.
-  const saveProfile = async () => {
-    const clean = {
-      ...profile,
-      name: String(profile.name || '').trim(),
-      heightCm: String(profile.heightCm || '').trim(),
-    };
-    const weight = String(weightInput || '').trim();
-    const onFile = weightHistory.find((e) => e.date === today);
-    let nextBw = weightHistory;
-    if (weight && Number(weight) > 0 && (!onFile || String(onFile.weight) !== weight)) {
-      // No `notes` key. It is the marker that says an entry came from the
-      // scrapped Bodyweight tab, and writing one here would make every weight
-      // the profile saves look legacy — so the migration would re-date it
-      // every morning and eat the history it is meant to keep.
-      nextBw = [
-        ...weightHistory.filter((e) => e.date !== today),
-        { date: today, weight },
-      ].sort((a, b) => (a.date < b.date ? 1 : -1));
-    }
-    setProfile(clean);
+  // A field commits from its own screen. The debounced writer picks the change
+  // up out of `profile` exactly as it always did, so persistence is untouched.
+  const commitField = (key, value) => {
+    setProfile((p) => ({ ...p, [key]: typeof value === 'string' ? value.trim() : value }));
+  };
+
+  const openField = (key) => {
+    setDraft(String(profile[key] ?? ''));
+    setEditField(key);
+  };
+  // Backing out of an edit discards it, silently, the way every app that does
+  // this does. A dialog on a path walked twice a year is not worth its weight.
+  const closeField = () => {
+    setEditField(null);
+    setDraft('');
+  };
+  const commitDraft = () => {
+    if (!editField || !draftReady) return;
+    commitField(editField, draft);
+    closeField();
+  };
+
+  // Weight is the one measurement that moves, and it files against today.
+  const saveWeight = async () => {
+    if (!weightReady) return;
+    const weight = num(String(weightInput).trim());
+    const nextBw = [
+      ...weightHistory.filter((e) => e.date !== today),
+      { date: today, weight },
+    ].sort((a, b) => (a.date < b.date ? 1 : -1));
     setBwLogs(nextBw);
-    // Show what is on record, not what was refused. A 0 typed into the weight
-    // field is not a weight, so it is not saved — and leaving it on screen said
-    // it had been, while Stats went on using the real one.
-    const onRecord = nextBw.find((e) => e.date === today) || nextBw[0];
-    setWeightInput(onRecord ? String(onRecord.weight) : '');
-    const previousProfile = savedProfileRef.current;
-    savedProfileRef.current = JSON.stringify(clean);
-    unpublishedRef.current = false;
-    setPending(false);
-    const okProfile = await save('profile', clean);
-    const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
-    const profileKeys = new Set(pendingKeysRef.current);
-    for (const k of changedKeys(
-      { profile: JSON.parse(previousProfile || '{}'), 'bodyweight-logs': weightHistory },
-      { profile: clean, 'bodyweight-logs': nextBw }
-    ))
-      profileKeys.add(k);
-    await flushKeys([...profileKeys], stateOf(persistable(logs), nextBw, clean));
-    const published = await publishAll(persistable(logs), nextBw, clean);
-    if ((okProfile && okWeight) || published) {
-      setSavedFlash('profile');
-      setTimeout(() => setSavedFlash(null), 1500);
-    }
+    await save('bodyweight-logs', nextBw);
+    const keys = new Set(pendingKeysRef.current);
+    keys.add(KEY.bodyweight);
+    await flushKeys([...keys], stateOf(persistable(logs), nextBw));
+    await publishAll(persistable(logs), nextBw);
+    setSavedFlash('weight');
+    setTimeout(() => setSavedFlash(null), 1500);
+  };
+
+  const unlockHeight = () => {
+    setHeightInput(String(profile.heightCm || ''));
+    setHeightUnlocked(true);
+  };
+  const saveHeight = () => {
+    if (!heightReady) return;
+    commitField('heightCm', num(String(heightInput).trim()));
+    setHeightUnlocked(false);
+    setSavedFlash('height');
+    setTimeout(() => setSavedFlash(null), 1500);
   };
 
   // The whole record as one file: every session, the weights, the profile and
@@ -1255,7 +1280,9 @@ export default function WorkoutTracker() {
     // `ready` matters: until the log has loaded the app renders a spinner and
     // there is no bar to measure, and the view has not changed to prompt a
     // second look.
-  }, [view, ready]);
+    // editField matters as much as view: the bar unmounts while a field is
+    // open, so the capsule has to be measured again when it comes back.
+  }, [view, ready, editField]);
 
   // The first placement is where the capsule already is, not somewhere it
   // slides in from.
@@ -1282,9 +1309,11 @@ export default function WorkoutTracker() {
     setOverrides(wanted && wanted.date === date ? { [`${wanted.slot}@${date}`]: true } : {});
   }, [date]);
 
-  // The weight on the profile is a current weight, not a blank form to fill in
-  // daily: it shows today's entry if there is one, and the last one on record
-  // otherwise.
+  // The weight field is a current weight, not a blank form to fill in daily: it
+  // shows today's entry if there is one, and the last one on record otherwise.
+  // So Save starts live on a day nothing has been logged — pressing it files
+  // that weight against today, which is a change — and locks once it matches
+  // what today already holds.
   useEffect(() => {
     const known = weightHistory.find((e) => e.date === today) || weightHistory[0];
     setWeightInput(known ? String(known.weight) : '');
@@ -1311,6 +1340,33 @@ export default function WorkoutTracker() {
   const dueOn = (iso) => SCHEDULE.find((x) => x.dow === dowOf(iso)) || null;
 
   // The Save bar belongs to a session in progress, and so to Home alone.
+  const editing = editField ? fieldByKey(editField) : null;
+  const draftValid = editing ? validField(editing.key, draft, today) : false;
+  const draftChanged = editing
+    ? String(draft).trim() !== String(profile[editing.key] ?? '').trim()
+    : false;
+  // Both halves, always together: a Save that lights for an unchanged value
+  // writes what is already there, and one that lights for an invalid value
+  // writes rubbish.
+  const draftReady = draftValid && draftChanged;
+
+  const todayWeightEntry = weightHistory.find((e) => e.date === today) || null;
+  const weightReady =
+    plausibleWeight(weightInput) &&
+    (!todayWeightEntry || Number(todayWeightEntry.weight) !== Number(weightInput));
+  const heightReady =
+    plausibleHeight(heightInput) && Number(heightInput) !== Number(profile.heightCm);
+  const heightLocked = Boolean(profile.heightCm) && !heightUnlocked;
+
+  // What a row shows to the right of its label. Empty reads as "Not set" so an
+  // unfilled field looks unfilled rather than broken.
+  const rowValue = (f) => {
+    const v = profile[f.key];
+    if (!v) return null;
+    if (f.key === 'dob') return age === null ? prettyDate(v) : `${prettyDate(v)} · ${age}`;
+    return v;
+  };
+
   const showSave =
     view === 'home' && !locked && !pastRecord && !restView && !unrecorded;
 
@@ -1348,9 +1404,11 @@ export default function WorkoutTracker() {
     if (missing.length) {
       return {
         title: missing.length > 1 ? 'Two numbers missing' : 'One number missing',
+        // The fields are directly above this message now, so it points at
+        // them rather than sending the reader to another tab.
         body: `BMI needs your ${missing.join(' and your ')}. ${
-          missing.length > 1 ? 'Both live' : 'It lives'
-        } on the profile.`,
+          missing.length > 1 ? 'Both are' : 'It is'
+        } at the top of this screen.`,
       };
     }
     const wrong = [];
@@ -1358,7 +1416,7 @@ export default function WorkoutTracker() {
     if (!plausibleWeight(latestWeight.weight)) wrong.push(`${num(latestWeight.weight)} kg`);
     return {
       title: 'That does not look right',
-      body: `There is no BMI to give for ${wrong.join(' and ')}. Worth checking on the profile.`,
+      body: `There is no BMI to give for ${wrong.join(' and ')}. Worth checking at the top of this screen.`,
     };
   })();
 
@@ -1483,7 +1541,7 @@ export default function WorkoutTracker() {
             </span>
           </div>
         </header>
-      ) : (
+      ) : editing ? null : (
         <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
           <div className="flex items-center justify-between gap-3">
             <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
@@ -2123,6 +2181,119 @@ export default function WorkoutTracker() {
 
       {view === 'stats' && (
         <div className="px-4 mt-4">
+          {/* Both inputs to BMI, on the screen that shows it. They used to live
+              on Profile, a tab away from the number they make, and the history
+              below said so in as many words: "add your weight on the profile".
+              Measurements sit above the reading rather than below it because
+              the WHO section is long, and a weight field under it would be off
+              the bottom of the screen every time. */}
+          <div className="bg-surface border border-line rounded-2xl p-5 mb-4">
+            <h2 className="text-xs uppercase tracking-widest text-dim font-bold">Measurements</h2>
+
+            <label htmlFor="stats-weight" className="text-[13px] font-bold mt-4 block">
+              Weight
+            </label>
+            <div className="flex gap-2 mt-1.5">
+              <div className="relative flex-1 min-w-0">
+                <input
+                  id="stats-weight"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  value={weightInput}
+                  placeholder="69"
+                  onChange={(e) => {
+                    const clean = cleanNumber(e.target.value, true, MAX.bodyWeight);
+                    if (clean !== null) setWeightInput(clean);
+                  }}
+                  className="w-full bg-raised border border-line rounded-xl pl-4 pr-10 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-dim font-bold pointer-events-none">
+                  kg
+                </span>
+              </div>
+              <button
+                onClick={saveWeight}
+                disabled={!weightReady}
+                aria-label="Save weight"
+                className={`px-5 rounded-xl text-sm font-bold shrink-0 transition ${
+                  weightReady ? 'bg-mint text-night' : 'bg-raised text-dim/60 border border-line'
+                }`}
+              >
+                {savedFlash === 'weight' ? <Check size={16} /> : 'Save'}
+              </button>
+            </div>
+            <p className="text-[13px] text-dim font-semibold mt-2 nums">
+              {todayWeightEntry
+                ? `${todayWeightEntry.weight} kg on record for today`
+                : 'Nothing recorded today.'}
+            </p>
+
+            {/* Set once, and locked because it sits next to a field that is
+                typed into every week. */}
+            <div className="border-t border-line mt-4 pt-4">
+              {heightLocked ? (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-bold">Height</span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-[15px] font-semibold nums">
+                        {profile.heightCm} cm
+                      </span>
+                      <button
+                        onClick={unlockHeight}
+                        className="text-[13px] font-bold text-mint"
+                      >
+                        Change
+                      </button>
+                    </span>
+                  </div>
+                  <p className="flex items-center gap-1.5 text-[13px] text-dim mt-2">
+                    <Lock size={12} /> Set once, so a stray tap cannot move it.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="stats-height" className="text-[13px] font-bold block">
+                    Height
+                  </label>
+                  <div className="flex gap-2 mt-1.5">
+                    <div className="relative flex-1 min-w-0">
+                      <input
+                        id="stats-height"
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        value={heightInput}
+                        placeholder="173"
+                        onChange={(e) => {
+                          const clean = cleanNumber(e.target.value, false, MAX.heightCm);
+                          if (clean !== null) setHeightInput(clean);
+                        }}
+                        className="w-full bg-raised border border-line rounded-xl pl-4 pr-10 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-dim font-bold pointer-events-none">
+                        cm
+                      </span>
+                    </div>
+                    <button
+                      onClick={saveHeight}
+                      disabled={!heightReady}
+                      aria-label="Save height"
+                      className={`px-5 rounded-xl text-sm font-bold shrink-0 transition ${
+                        heightReady
+                          ? 'bg-mint text-night'
+                          : 'bg-raised text-dim/60 border border-line'
+                      }`}
+                    >
+                      {savedFlash === 'height' ? <Check size={16} /> : 'Save'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           {bmi === null ? (
             <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
               <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
@@ -2134,12 +2305,6 @@ export default function WorkoutTracker() {
               <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
                 {statsGap.body}
               </div>
-              <button
-                onClick={() => setView('profile')}
-                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-              >
-                Go to profile
-              </button>
             </div>
           ) : (
             <>
@@ -2241,7 +2406,7 @@ export default function WorkoutTracker() {
             <div className="space-y-2">
               {weightHistory.length === 0 && (
                 <div className="text-[15px] text-dim">
-                  No entries yet. Add your weight on the profile and it is kept here by date.
+                  No entries yet. Save a weight above and it is kept here by date.
                 </div>
               )}
               {weightHistory.map((e, i) => {
@@ -2278,11 +2443,16 @@ export default function WorkoutTracker() {
         </div>
       )}
 
-      {view === 'profile' && (
-        <div className="px-4 mt-4">
+      {view === 'profile' && editing === null && (
+        <div className="px-4 mt-4 space-y-4">
+          {/* Your face, at a size worth looking at. On a screen that is now
+              nothing but identity, it is the content rather than a competitor
+              for the top of it. */}
           <div className="bg-surface border border-line rounded-2xl p-5">
             <div className="flex items-center gap-4">
-              <Avatar profile={profile} size={72} />
+              <label htmlFor="profile-photo" className="cursor-pointer shrink-0">
+                <Avatar profile={profile} size={72} />
+              </label>
               <div className="min-w-0">
                 <label
                   htmlFor="profile-photo"
@@ -2312,105 +2482,43 @@ export default function WorkoutTracker() {
               </div>
             </div>
             {photoError && <div className="mt-3 text-[13px] text-danger">{photoError}</div>}
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-5 block">
-              Name
-            </label>
-            <input
-              type="text"
-              value={profile.name}
-              onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Your name"
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold focus:border-mint focus:outline-none"
-            />
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Date of birth
-            </label>
-            <input
-              type="date"
-              value={profile.dob}
-              max={today}
-              onChange={(e) => setProfile((p) => ({ ...p, dob: e.target.value }))}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
-            {/* Age is worked out from the date, so it can never go stale. */}
-            <div className="text-[13px] text-dim font-semibold mt-1.5 nums">
-              {age === null ? 'Your age is worked out from this.' : `${age} years old`}
-            </div>
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Sex
-            </label>
-            <div className="flex gap-2 mt-1.5">
-              {SEXES.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setProfile((p) => ({ ...p, sex: p.sex === s ? '' : s }))}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition ${
-                    profile.sex === s
-                      ? 'bg-fg text-night border-fg'
-                      : 'bg-raised text-dim border-line'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Height (cm)
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              value={profile.heightCm}
-              placeholder="178"
-              onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true, MAX.heightCm);
-                if (clean !== null) setProfile((p) => ({ ...p, heightCm: clean }));
-              }}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Weight (kg)
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              value={weightInput}
-              placeholder="69"
-              onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true, MAX.bodyWeight);
-                if (clean !== null) setWeightInput(clean);
-              }}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
           </div>
 
-          <button
-            onClick={saveProfile}
-            className="w-full mt-3 bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
-          >
-            {savedFlash === 'profile' ? (
-              <>
-                <Check size={18} /> Saved
-              </>
-            ) : (
-              'Save profile'
-            )}
-          </button>
+          {/* A row is a door, not a field. The value is what you read; editing
+              happens where it has your whole attention. */}
+          <div className="bg-surface border border-line rounded-2xl overflow-hidden">
+            {PROFILE_FIELDS.map((f, i) => {
+              const shown = rowValue(f);
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => openField(f.key)}
+                  aria-label={`Edit ${f.label}`}
+                  className={`w-full flex items-center gap-3 px-4 py-4 text-left ${
+                    i > 0 ? 'border-t border-line' : ''
+                  }`}
+                >
+                  <span className="text-[15px] font-semibold shrink-0">{f.label}</span>
+                  <span
+                    className={`flex-1 min-w-0 text-[15px] text-right truncate ${
+                      shown ? 'text-dim' : 'text-dim/60'
+                    }`}
+                  >
+                    {shown || 'Not set'}
+                  </span>
+                  <ChevronRight size={18} className="text-dim shrink-0" />
+                </button>
+              );
+            })}
+          </div>
 
-          {/* Only when this view can actually hand over a file. An export
-              button that cannot export is worse than none. */}
+          {/* Your data, which is what this screen is about once the details
+              above are set. */}
           {downloader && (
             <button
               onClick={exportLog}
               aria-label="Export log"
-              className="w-full mt-2 bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2"
+              className="w-full bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2"
             >
               {exportState === 'saved' ? (
                 <>
@@ -2424,9 +2532,128 @@ export default function WorkoutTracker() {
             </button>
           )}
           {exportState === 'failed' && (
-            <p className="text-xs text-dim mt-2 text-center">
-              That file could not be saved.
-            </p>
+            <p className="text-xs text-dim text-center">That file could not be saved.</p>
+          )}
+        </div>
+      )}
+
+      {/* One field, its own screen. Save sits top right rather than along the
+          bottom: with a keyboard up, a fixed bottom bar in an iframe is the
+          same geometry that hid the nav behind the home indicator, and the two
+          corners read plainly as discard and commit. */}
+      {view === 'profile' && editing && (
+        <div className="px-4 pt-5">
+          <div className="flex items-center gap-1 -ml-2">
+            <button onClick={closeField} aria-label="Back" className="p-2 rounded-full text-fg">
+              <ChevronLeft size={24} />
+            </button>
+            <h2 className="font-display text-lg font-bold flex-1">{editing.label}</h2>
+            {editing.kind !== 'choice' && (
+              <button
+                onClick={commitDraft}
+                disabled={!draftReady}
+                aria-label={`Save ${editing.label}`}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition ${
+                  draftReady ? 'bg-mint text-night' : 'bg-raised text-dim/60 border border-line'
+                }`}
+              >
+                Save
+              </button>
+            )}
+          </div>
+
+          {editing.kind === 'choice' ? (
+            /* A choice cannot be half made or wrong, so there is nothing for a
+               Save to confirm. Tapping is the answer. */
+            <div className="bg-surface border border-line rounded-2xl overflow-hidden mt-5">
+              {editing.options.map((option, i) => (
+                <button
+                  key={option}
+                  onClick={() => {
+                    commitField(editing.key, option);
+                    closeField();
+                  }}
+                  className={`w-full flex items-center justify-between gap-3 px-4 py-4 text-left ${
+                    i > 0 ? 'border-t border-line' : ''
+                  }`}
+                >
+                  <span className="text-[15px] font-semibold">{option}</span>
+                  {profile[editing.key] === option && <Check size={18} className="text-mint" />}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-5">
+              <div
+                className={`relative bg-surface border rounded-2xl px-4 pt-2.5 pb-2 ${
+                  draftReady ? 'border-mint' : 'border-line focus-within:border-mint'
+                }`}
+              >
+                {/* The label stays put while you type, so a screen with one box
+                    on it still says what the box is. */}
+                <label
+                  htmlFor="field-input"
+                  className="block text-[11px] uppercase tracking-widest text-dim font-bold"
+                >
+                  {editing.label}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="field-input"
+                    autoFocus
+                    type={editing.type}
+                    inputMode={editing.inputMode}
+                    max={editing.kind === 'date' ? today : undefined}
+                    value={draft}
+                    placeholder={editing.placeholder}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      // The return key is the commit for anything with a
+                      // keyboard, so the corner is never a journey.
+                      if (e.key === 'Enter') commitDraft();
+                    }}
+                    className={`flex-1 min-w-0 bg-transparent py-1 text-base font-semibold focus:outline-none ${
+                      editing.kind === 'date' ? 'nums' : ''
+                    }`}
+                  />
+                  {draftReady ? (
+                    <span
+                      aria-label="Ready to save"
+                      className="w-6 h-6 rounded-full bg-mint text-night flex items-center justify-center shrink-0"
+                    >
+                      <Check size={14} strokeWidth={3} />
+                    </span>
+                  ) : (
+                    draft !== '' &&
+                    editing.kind !== 'date' && (
+                      <button
+                        onClick={() => setDraft('')}
+                        aria-label="Clear"
+                        className="w-6 h-6 rounded-full bg-dim/25 text-fg flex items-center justify-center shrink-0"
+                      >
+                        <X size={14} strokeWidth={3} />
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+
+              {editing.key === 'dob' && draftValid && (
+                <p className="text-[13px] text-dim font-semibold mt-2 nums">
+                  {ageOn(draft, today)} years old
+                </p>
+              )}
+              {/* Also when the field has been cleared: emptying a required
+                  value is exactly when the Save going dark needs explaining. */}
+              {!draftValid && (draft !== '' || draftChanged) && (
+                <p className="text-[13px] text-danger mt-2">{invalidReason(editing.key)}</p>
+              )}
+              {editing.hint && <p className="text-[13px] text-dim mt-2">{editing.hint}</p>}
+            </div>
+          )}
+
+          {editing.kind === 'choice' && editing.hint && (
+            <p className="text-[13px] text-dim mt-3">{editing.hint}</p>
           )}
         </div>
       )}
@@ -2442,6 +2669,7 @@ export default function WorkoutTracker() {
           below the bar were clear windows onto the page: an exercise name
           scrolling past landed there razor-sharp between two frosted panels,
           which reads as a mistake rather than as glass. */}
+      {editing === null && (
       <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
         {showSave && (
           <button
@@ -2526,6 +2754,7 @@ export default function WorkoutTracker() {
           })}
         </nav>
       </div>
+      )}
     </div>
   );
 }

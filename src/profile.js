@@ -5,9 +5,20 @@
 // prefers waist-to-height for people carrying muscle — but mixing standards in
 // one app produces a number nobody can look up. One standard, named on screen.
 
-export const SEXES = ['Male', 'Female'];
+// Nothing in the app reads this — BMI follows one scale for everyone — so an
+// opt-out costs nothing and is the honest shape for a field we ask for and
+// then do not use.
+export const SEXES = ['Male', 'Female', 'Prefer not to say'];
 
-export const EMPTY_PROFILE = { name: '', dob: '', sex: '', heightCm: '', photo: '' };
+export const EMPTY_PROFILE = {
+  name: '',
+  email: '',
+  mobile: '',
+  dob: '',
+  sex: '',
+  heightCm: '',
+  photo: '',
+};
 
 // Stored profiles predate fields that were added later, and a missing key
 // reads as `undefined` in an input, which React treats as uncontrolled.
@@ -223,4 +234,108 @@ export function migrateWeights(entries, today) {
     { date: today, weight: String(newest.weight) },
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
   return { weights, changed: true };
+}
+
+// The identity fields, each edited on a screen of its own.
+//
+// Height is deliberately absent: it is an input to BMI, so it lives on Stats
+// beside the weight it is measured against, not here among the things that say
+// who you are. Weight is absent for the same reason and the opposite one — it
+// is the only measurement that changes.
+export const PROFILE_FIELDS = [
+  { key: 'name', label: 'Name', kind: 'text', type: 'text', placeholder: 'Your name' },
+  {
+    key: 'email',
+    label: 'Email',
+    kind: 'text',
+    type: 'email',
+    inputMode: 'email',
+    placeholder: 'you@example.com',
+    optional: true,
+    // Nothing reads it. When there are accounts this stops being a profile
+    // field and becomes a login identity, so nothing is built on it now.
+    hint: 'Kept with your details. Nothing in the app uses it yet.',
+  },
+  {
+    key: 'mobile',
+    label: 'Mobile number',
+    kind: 'text',
+    type: 'tel',
+    inputMode: 'tel',
+    placeholder: '+971 50 123 4567',
+    optional: true,
+    hint: 'Kept with your details. Nothing in the app uses it yet.',
+  },
+  {
+    key: 'dob',
+    label: 'Date of birth',
+    kind: 'date',
+    type: 'date',
+    hint: 'Your age is worked out from this, so it never goes stale.',
+  },
+  {
+    key: 'sex',
+    label: 'Gender',
+    kind: 'choice',
+    options: SEXES,
+    // Said plainly rather than left for someone to wonder about. The WHO bands
+    // are the same for everyone, so this genuinely changes nothing on Stats.
+    hint: 'BMI uses the same scale for everyone, so this does not change any of your numbers.',
+  },
+];
+
+export const fieldByKey = (key) => PROFILE_FIELDS.find((f) => f.key === key) || null;
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const PHONE_SHAPE = /^\+?[\d\s()-]+$/;
+const digitsIn = (v) => (String(v).match(/\d/g) || []).length;
+
+// Bounds for a date of birth. Not a judgement about who may lift — a date
+// outside these is a typo, and the point is to catch a year entered wrong.
+export const DOB_AGE = [13, 120];
+
+// Whether a value may be saved. One function drives both the tick inside the
+// field and whether the Save is live, so the two can never disagree.
+export function validField(key, value, todayIso) {
+  const v = String(value ?? '').trim();
+  switch (key) {
+    case 'name':
+      return v.length > 0;
+    case 'email':
+      return v === '' || EMAIL.test(v);
+    case 'mobile':
+      return v === '' || (PHONE_SHAPE.test(v) && digitsIn(v) >= 7);
+    case 'dob': {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+      if (Number.isNaN(new Date(`${v}T00:00:00`).getTime())) return false;
+      if (todayIso && v > todayIso) return false;
+      const age = ageOn(v, todayIso);
+      return age !== null && age >= DOB_AGE[0] && age <= DOB_AGE[1];
+    }
+    case 'heightCm':
+      return plausibleHeight(v);
+    case 'sex':
+      return SEXES.includes(v);
+    default:
+      return true;
+  }
+}
+
+// Why a value was refused. Shown under the field, so a Save that will not light
+// up is never a mystery.
+export function invalidReason(key) {
+  switch (key) {
+    case 'name':
+      return 'A name cannot be empty.';
+    case 'email':
+      return 'That does not look like an email address.';
+    case 'mobile':
+      return 'That does not look like a phone number.';
+    case 'dob':
+      return `Use a date in the past that puts you between ${DOB_AGE[0]} and ${DOB_AGE[1]}.`;
+    case 'heightCm':
+      return `A height between ${PLAUSIBLE.heightCm[0]} and ${PLAUSIBLE.heightCm[1]} cm.`;
+    default:
+      return 'That value cannot be saved.';
+  }
 }

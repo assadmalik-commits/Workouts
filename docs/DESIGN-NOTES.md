@@ -554,3 +554,74 @@ Shape:
 
 It has nothing to do with exercise IDs and could ship on its own; it is bundled
 with them because that is the next time the app is opened for work.
+
+## v8.3 — Profile is who you are, Stats is what you measure
+
+The Save button had lost its job. Before v8.1 it meant "not yet in the
+published page", which lasted until you pressed it. Once the store took writes
+half a second after typing, nothing was ever outstanding, so the button sat
+permanently in its quiet state announcing "Saved" — including on an empty
+session it had saved nothing of. The word was the bug: "Saved" is a claim about
+the past. A greyed-out "Save" claims nothing.
+
+Four apps were looked at: WhatsApp Business, GymNation, Instagram, WeChat. What
+they agree on is that a set-once field is a row you read, and editing it happens
+on a screen of its own with a commit that stays locked until something changes.
+What they disagree on is where that commit lives — WhatsApp puts a bar along the
+bottom, Instagram and WeChat put it in the top right. WeChat contradicts itself
+between two of its own screens, so none of them is scripture.
+
+### The reframe
+
+Every one of those is a profile you revisit. Ours is not. Five of six fields are
+set once at first run and never touched again; the sixth, weight, is typed every
+week. So the screen's job was never "edit your profile".
+
+That splits the app cleanly:
+
+- **Profile — who you are.** Photo, name, email, mobile, date of birth, gender.
+  A record, not a form.
+- **Stats — what you measure.** Height, weight, BMI, the WHO bands, the history.
+
+Height and weight belong together because they are the two inputs to one
+number. Splitting them across tabs was the original mistake, and the app had
+been admitting it: Stats already held the BMI *and* the weight history, and its
+empty state read "add your weight on the profile" — pointing at another tab to
+fix a number it was showing. Moving the inputs deleted that sentence.
+
+### Where the commit went, and why it is not taste
+
+Top right. On a single-field screen the keyboard is up, and a `position: fixed`
+bottom bar in iOS Safari inside a cross-origin iframe is the same geometry that
+hid the nav behind the home indicator in v8.2 — fixed is relative to the layout
+viewport, and in an iframe the offsets to correct it cannot be read. Instagram
+and WeChat are probably at the top for the same reason. WhatsApp can afford the
+bottom because it is native and gets the inset for free.
+
+The return key also commits, so the corner is never a journey for a text field.
+
+### One rule instead of a per-field argument
+
+**A Save exists where a value can be incomplete or wrong.** A half-typed name,
+a height of 1, a year fat-fingered — those need a moment to say "yes, that one".
+A choice cannot be either: the instant you tap "Female" your intent is whole, so
+a Save there is a redundant tap carrying no information the selection does not.
+Gender commits on tap and returns; text, number and date fields keep the locked
+Save.
+
+That rule answers the same question for every field added later.
+
+### Odds and ends
+
+- Height gets a lock rather than a row, because it sits *next to* a live control
+  rather than among set-once ones. Same guard, different context.
+- Gender offers "Prefer not to say", and says on screen that BMI uses the same
+  scale for everyone — which is the honest thing to say about a field the app
+  collects and never reads.
+- Backing out of an edit discards it silently. All four references do, and a
+  dialog on a path walked twice a year is not worth its weight.
+- The edit screen hides both the app header and the bottom bar. A back arrow
+  plus a tab bar is two navigation models arguing on one screen.
+- An implausible height or weight can no longer be entered at all — the Save
+  never lights — so "that does not look right" is now only reachable from data
+  recorded before those guards existed. It still has a test, seeded directly.
