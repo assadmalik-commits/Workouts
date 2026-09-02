@@ -6,6 +6,28 @@
     <meta name="theme-color" content="#0b0e14" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Training Log</title>
+    <!-- Runs before anything paints, and before React exists.
+
+         The palette in index.css is dark by default; light is the override
+         that data-app-theme switches on. So a document with no attribute yet
+         is a dark document. React sets that attribute from an effect, which
+         runs after the first paint — which meant a lifter who had chosen day
+         got a frame of night on every single open.
+
+         sync.js and the artifact build both copy this element through by its
+         id, so there is one copy of it and it cannot drift. -->
+    <script id="theme-boot">
+      try {
+        var d = document.documentElement;
+        var t = JSON.parse(localStorage.getItem('theme'));
+        if (t !== 'dark' && t !== 'light') t = 'light';
+        d.dataset.appTheme = t;
+        d.style.colorScheme = t;
+      } catch (e) {
+        document.documentElement.dataset.appTheme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

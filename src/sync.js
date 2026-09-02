@@ -16,6 +16,9 @@
 const DATA_ID = 'log-data';
 const CSS_ID = 'app-css';
 const JS_ID = 'app-js';
+// Sets the theme before the first paint. Carried through by id rather than
+// rewritten here, so there is one copy of it in the project.
+const BOOT_ID = 'theme-boot';
 
 // The log carried inside the page itself, or null when this isn't the
 // published page.
@@ -51,6 +54,7 @@ export function hasEmbeddedData(state) {
 function buildDocument(state) {
   const css = document.getElementById(CSS_ID);
   const js = document.getElementById(JS_ID);
+  const boot = document.getElementById(BOOT_ID);
   if (!css || !js) return null;
   const json = JSON.stringify(state).replace(/</g, '\\u003c');
   return [
@@ -63,6 +67,7 @@ function buildDocument(state) {
     // hardcoded title renamed it back on every save.
     `<title>${(document.title || 'Workout Tracker').replace(/</g, '\\u003c')}</title>`,
     '<style id="' + CSS_ID + '">' + css.textContent + '</style>',
+    boot ? '<script id="' + BOOT_ID + '">' + boot.textContent + '<\/script>' : '',
     '</head>',
     '<body>',
     '<div id="root"></div>',
