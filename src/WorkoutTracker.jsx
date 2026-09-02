@@ -14,7 +14,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.3';
+const APP_VERSION = '8.4';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -999,11 +999,14 @@ export default function WorkoutTracker() {
     }
     // Opening and closing exercises moves state without changing the record.
     if (snapshot === savedRef.current) return;
+    // Outstanding from the keystroke, not from the timer. The record counts a
+    // set the moment it is typed, so leaving this until the debounce fired let
+    // the button say "Saved" over a set that had not reached anything yet.
+    unpublishedRef.current = true;
+    setPending(true);
     const id = setTimeout(() => {
       const previous = savedRef.current;
       savedRef.current = snapshot;
-      unpublishedRef.current = true;
-      setPending(true);
       const record = JSON.parse(snapshot);
       save('workout-logs', record);
       // The store takes the day that changed on the same debounce as the
@@ -1076,6 +1079,20 @@ export default function WorkoutTracker() {
     if (!ready) return;
     setHeightInput(String(profile.heightCm || ''));
   }, [ready, profile.heightCm]);
+
+  // Leaving a screen abandons whatever was half-typed on it. Coming back to a
+  // field still holding an edit from ten minutes ago is a trap: it reads as a
+  // value that was chosen rather than one walked away from, and its Save may
+  // be sitting lit over it. Keyed on the section alone — the record it resets
+  // to is read at the moment of the change, not followed.
+  useEffect(() => {
+    const known = weightHistory.find((e) => e.date === today) || weightHistory[0];
+    setWeightInput(known ? String(known.weight) : '');
+    setHeightInput(String(profile.heightCm || ''));
+    setHeightUnlocked(false);
+    setEditField(null);
+    setDraft('');
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveLogs = async () => {
     const record = persistable(logs);
@@ -2686,18 +2703,21 @@ export default function WorkoutTracker() {
                 : 'bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 text-dim'
             }`}
           >
-            {/* One control, two states. Typing is already the save, so a filled
-                button sitting there all session is loud about nothing; it fills
-                only when something has not reached the published page yet, and
-                otherwise says so quietly. It stays pressable either way — being
-                able to press it is the point of having it. The accessible name
-                does not change with the state. */}
+            {/* Three states, because three things can be true. Green and
+                pressable when something is written down and not yet filed.
+                "Saved" when the session holds sets and they are all on record.
+                And on a session with nothing in it, it says so — "Saved" there
+                was a claim about a save that never happened, which is what
+                made the button impossible to trust. The accessible name stays
+                the same in all three. */}
             {pending ? (
               `Save ${tab} ${variant}`
-            ) : (
+            ) : hasRecord ? (
               <>
                 <Check size={15} /> Saved
               </>
+            ) : (
+              'No sets entered yet'
             )}
           </button>
         )}
