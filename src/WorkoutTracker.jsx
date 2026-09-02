@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '9.0';
+const APP_VERSION = '9.1';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -313,6 +313,10 @@ const prettyDate = (iso) => {
 // it — this one included. Without a note of where the lifter was, that reload
 // boots them onto whatever session is next due, mid-set. The note lives in
 // sessionStorage so it survives the reload and nothing else.
+// A store that has not answered within a beat. Not an error — just too slow to
+// hold the first render for.
+const SLOW_STORE = Symbol('slow-store');
+
 const RESUME_KEY = 'resume-session';
 
 const rememberPlace = (place) => {
@@ -495,19 +499,74 @@ export default function WorkoutTracker() {
 
   useEffect(() => {
     (async () => {
-      const embedded = readEmbedded();
-      let stored;
-      let b;
-      let p;
-      if (hasEmbeddedData(embedded)) {
-        stored = embedded['workout-logs'] || {};
-        b = embedded['bodyweight-logs'] || [];
-        p = embedded.profile;
-      } else {
-        stored = await load('workout-logs', {});
-        b = await load('bodyweight-logs', []);
-        p = await load('profile', null);
+      // Null on any page without the block — `npm run dev`, or any plain host.
+      const embedded = readEmbedded() || {};
+
+      // Where the first render comes from, in order of how current it is.
+      //
+      // The device copy is written on the same debounce as everything else, so
+      // it is up to the minute. The block embedded in the page was up to the
+      // minute too, until v8.1: the app republished itself on every save, and
+      // rewrote the block each time. Once the store took over, the page stopped
+      // republishing and the block froze at whatever was true when it was last
+      // shipped. It has been read first on every open since — which shows the
+      // lifter their training as it stood on that day until the store answers,
+      // and that is what "my changes are missing" looks like from the outside.
+      //
+      // So: the device first, the store second, and the block only when there
+      // is nothing else — which is a page with no store, the case it was
+      // written for.
+      const deviceLogs = await load('workout-logs', null);
+      const deviceBw = await load('bodyweight-logs', null);
+      const deviceProfile = await load('profile', null);
+      const deviceHas = deviceLogs !== null || deviceBw !== null || deviceProfile !== null;
+
+      const storePromise = getStore();
+      let early = null;
+      if (deviceHas) {
+        early = { logs: deviceLogs || {}, bw: deviceBw || [], profile: deviceProfile };
+      } else if (typeof window !== 'undefined' && typeof window.claude?.use === 'function') {
+        // Nothing on this device and a store to ask. Waiting shows a spinner
+        // for a moment; painting the block shows a log that is days old and
+        // says nothing about being provisional. Bounded, so a store that never
+        // answers costs a moment rather than the app.
+        const waited = await Promise.race([
+          storePromise,
+          new Promise((r) => setTimeout(() => r(SLOW_STORE), 2500)),
+        ]);
+        if (waited && waited !== SLOW_STORE) {
+          const first = await Promise.race([
+            waited.readAll(),
+            new Promise((r) => setTimeout(() => r(null), 2500)),
+          ]);
+          if (first && first.ok && !first.empty) {
+            early = {
+              logs: first.state['workout-logs'] || {},
+              bw: first.state['bodyweight-logs'] || [],
+              profile: first.state.profile,
+            };
+          }
+        }
       }
+      if (!early) {
+        early = {
+          logs: embedded['workout-logs'] || {},
+          bw: embedded['bodyweight-logs'] || [],
+          profile: embedded.profile,
+        };
+      }
+      // The photo is the one thing worth taking from the block even when
+      // something fresher exists, because it changes about never — a stale copy
+      // is the same copy. Losing a face because one document did not come back
+      // is a poor trade, and unlike a log it cannot mislead: it is either the
+      // right picture or none.
+      if (!early.profile?.photo && embedded.profile?.photo) {
+        early.profile = { ...(early.profile || {}), photo: embedded.profile.photo };
+      }
+
+      const stored = early.logs;
+      const b = early.bw;
+      const p = early.profile;
       const { logs: migrated, changed } = migrate(stored);
       const { weights, changed: weightsChanged } = migrateWeights(b, localDateStr());
       setLogs(migrated);
@@ -560,7 +619,7 @@ export default function WorkoutTracker() {
       // a correction made out of range — is named in the pending set and
       // outranks it.
       pendingKeysRef.current = new Set(await load('db-pending', []));
-      const store = await getStore();
+      const store = await storePromise;
       storeRef.current = store;
       if (!store) return;
       setDurable(true);

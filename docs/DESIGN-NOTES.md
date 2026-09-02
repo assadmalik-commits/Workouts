@@ -683,3 +683,62 @@ follows the phone turning over at sunset rather than at the next open.
 The boot script in `index.html` and the `useState` initialiser resolve the
 preference by identical rules. If those two ever disagree, the disagreement is
 a repaint — which is the whole bug, reintroduced.
+
+## v9.1 — the frozen block, and what it had been doing since v8.1
+
+The theme flash was not a theme bug. It was the visible corner of a regression
+introduced by the storage move, and it had been affecting the whole app.
+
+### What changed underneath
+
+Before v8.1 the app republished itself on every save, and `publishAll` wrote the
+whole state — log, weights, profile, theme — back into `#log-data`. So the block
+embedded in the page was **continuously refreshed**. Reading it first on load was
+correct, because it was never more than one save out of date.
+
+v8.1 added `if (storeRef.current) return true;` so a save no longer republishes.
+That was the point of the change and it is right. But the block stopped being
+refreshed at that moment and became a snapshot of whatever was true when the
+page was last shipped — while the load path went on reading it first, as though
+nothing had changed.
+
+Since then, every open rendered the log, the weights, the profile and the theme
+**as they stood at the last publish**, until the store answered a second later.
+Measured, with a store holding a session the page had never heard of:
+
+    the week counter showed  3 -> 4 of 6
+
+The theme was simply the most visible instance, because a whole-page colour
+change is impossible to miss where a stale set count is not.
+
+### The fix
+
+The first render now comes from the most current thing available, in order:
+
+1. **The device copy.** Written on the same debounce as everything else, so it
+   is up to the minute.
+2. **The store**, waited for — bounded — when the device has nothing. A spinner
+   for a moment is honest; a log that is days old and says nothing about being
+   provisional is not.
+3. **The block**, only when there is nothing else. That is a page with no store,
+   which is the case it was written for.
+
+The photo is the one exception, taken from the block even when something fresher
+exists: it changes about never, so a stale copy is the same copy, and it cannot
+mislead — it is either the right face or none.
+
+### The lesson worth keeping
+
+**A change that stops something being written must account for everything that
+reads it.** v8.1 was reviewed as "does the log still save" and it did. Nobody
+asked what else had depended on the publish as a side effect. The block had two
+jobs — a backup, and the source for the first render — and only the first was
+thought about.
+
+Two smaller versions of the same fault turned up alongside it:
+
+- The suites were pinned to version-numbered files, so `tdb` ran against the
+  v8.1 build for four versions. Its passes were real and about old code. Every
+  suite now reads one `current.html` that the build writes.
+- The `theme` in `live-*.json`, which seeds the embedded block, was hand-carried
+  between versions and drifted from the store. It is rebuilt from `read_db` now.
