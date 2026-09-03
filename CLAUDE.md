@@ -22,10 +22,37 @@ has already been tried and rejected.
 
 ```bash
 npm run build            # check the exit status, see below
+npm test                 # builds, serves, runs every suite in test/
 ```
 
-Tests are Playwright scripts driven against the built app. Chromium only, at
-`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, with `--no-sandbox`.
+Tests are Playwright scripts driven against the built app, and they live in
+`test/`. Chromium only, at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`,
+with `--no-sandbox`. `npm test` builds first, writes `test/art/current.html`,
+starts the two static servers the suites expect on 4320 and 4300, and runs
+everything; pass suite filenames to run a subset.
+
+`test/run-all.mjs` is the runner, `test/lib.mjs` and `test/dbstub.mjs` the
+fixtures and the artifact-runtime stand-in, `test/bake.mjs` the page builders
+(see below), and `test/screencast.mjs` + `test/png.mjs` the frame recorder —
+CDP screencast decoded to real pixels, which is the only instrument that can
+see a frame painted while the page's main thread is blocked.
+
+**Every suite reads `test/art/current.html`, which the build writes.** Pinning a
+suite to a version-numbered page is how `tdb` spent four versions asserting
+things about code that had already been replaced, and how two `repro` suites
+went on testing publish-on-save for twelve versions after it was removed. Do not
+reintroduce one.
+
+**What the page carries is part of the scenario, not a constant.** `pageFor`
+swaps the baked theme and `pageWith` the embedded block, both in the bytes of
+the build under test. A suite that reads the lifter's live record moves every
+time he trains: `tdb` once reported a migration bug that was really its own
+fixture walking. Counting suites use `test/fixtures/three-day.json`, which is
+frozen.
+
+`test/fixtures/live-current.json` is his real record and is **not committed** —
+it is gitignored, and `tlive`, whose whole job is to mirror the live store,
+skips without it. Rebuild it from the published page when you need it.
 
 ## Rules learned the hard way
 
@@ -46,6 +73,21 @@ there is one — that guard is what keeps a save from reloading the page under
 the lifter. It is only reachable out of signal, which is where its test has to
 live: with a healthy store the Save button disables itself the moment the write
 confirms, so nothing can be caught there.
+
+There is exactly one deliberate exception, and it is not a save. The theme is
+baked into the page because nothing else in that frame survives a close, and
+only a publish can refresh that bake — so changing the Appearance rewrites the
+page. `rebakeAppearance` has its own guards and never touches `publishAll`'s: it
+refuses before the store has answered, with no publisher, and when the page
+already carries the value asked for. It fires when the app is **hidden**, never
+on the tap; publishing under the lifter's finger is a flicker a second after
+they chose, which is what they were trying to stop.
+
+**The published page can be newer than this repo.** Since that rebake exists,
+the app publishes on its own, and the block in the live page can hold a weigh-in
+or a profile field no fixture here has. Build a release from the live page's
+block, not from a local `live-*.json`, and if a publish is refused as behind,
+merge onto what came back and check the merge field by field — never resend.
 
 **Opening an exercise is not an edit.** It adds a blank set so there is a row to
 type into. Compare `persistable(logs)` — filled sets only — to decide whether

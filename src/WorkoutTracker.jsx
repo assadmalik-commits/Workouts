@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
-  Home, Flame, Activity, User, Camera, Download,
+  Home, Flame, Activity, User, Camera, Download, ChevronRight, ChevronLeft, X, Lock,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
@@ -10,10 +10,12 @@ import { PROGRAM, DAYS, VARIANTS } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
   BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf, plausibleHeight, plausibleWeight,
+  PROFILE_FIELDS, fieldByKey, validField, invalidReason,
+  APPEARANCE, isThemePref, labelOfPref, prefOfLabel,
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '8.2';
+const APP_VERSION = '10.0';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -311,6 +313,34 @@ const prettyDate = (iso) => {
 // it — this one included. Without a note of where the lifter was, that reload
 // boots them onto whatever session is next due, mid-set. The note lives in
 // sessionStorage so it survives the reload and nothing else.
+// A store that has not answered within a beat. Not an error — just too slow to
+// hold the first render for.
+const SLOW_STORE = Symbol('slow-store');
+
+// The app's own account of its boot, shown by tapping the version number. The
+// theme fault took five versions partly because a flash cannot be photographed
+// and every diagnosis was reasoning at a distance. This is the app answering
+// for itself.
+// The theme baked into the page at publish time. Not a preference the app can
+// write — it is the only thing in this frame readable before the first paint
+// that outlives the app being closed. Storage does not, and cookies are blocked;
+// both were measured failing on the lifter's own phone rather than assumed.
+const readPageTheme = () => {
+  try {
+    return typeof window.__pageTheme === 'function' ? window.__pageTheme() : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+const note = (step, detail) => {
+  try {
+    if (typeof window !== 'undefined' && typeof window.__note === 'function') window.__note(step, detail);
+  } catch (e) {
+    /* diagnostics must never be the thing that breaks */
+  }
+};
+
 const RESUME_KEY = 'resume-session';
 
 const rememberPlace = (place) => {
@@ -426,7 +456,46 @@ export default function WorkoutTracker() {
   const [caughtUp, setCaughtUp] = useState({});
   // Tapping Rest looks at the rest day from any weekday, without moving off it.
   const [restPeek, setRestPeek] = useState(false);
-  const [theme, setTheme] = useState('light');
+  // What was chosen: follow the phone, or override it. Read synchronously and
+  // matching the boot script in index.html exactly — the two disagreeing is a
+  // repaint.
+  const [themePref, setThemePref] = useState(() => {
+    // Both places, in the same order as the boot script. Reading only one of
+    // them here is what made the second open a coin toss: the script painted
+    // dark from the cookie, React started at system, resolved it against a
+    // light phone, and painted over it before the load could put it back.
+    // These two disagreeing is a repaint — the rule this file already carries,
+    // broken the moment a second place to look was added to one of them.
+    try {
+      const t = JSON.parse(localStorage.getItem('theme'));
+      if (isThemePref(t)) return t;
+    } catch (e) {
+      /* blocked storage falls through to the cookie */
+    }
+    const page = readPageTheme();
+    return isThemePref(page) ? page : 'system';
+  });
+  // What the phone is set to, watched rather than sampled: on System the app
+  // has to follow it turning over at sunset, not only at the next open.
+  const [systemDark, setSystemDark] = useState(() => {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch (e) {
+      return false;
+    }
+  });
+  useEffect(() => {
+    let mq;
+    try {
+      mq = window.matchMedia('(prefers-color-scheme: dark)');
+    } catch (e) {
+      return undefined;
+    }
+    const follow = (e) => setSystemDark(e.matches);
+    mq.addEventListener('change', follow);
+    return () => mq.removeEventListener('change', follow);
+  }, []);
+  const theme = themePref === 'system' ? (systemDark ? 'dark' : 'light') : themePref;
   const [showHistory, setShowHistory] = useState(false);
   const [openEx, setOpenEx] = useState(null);
   const [savedFlash, setSavedFlash] = useState(null);
@@ -437,9 +506,26 @@ export default function WorkoutTracker() {
   // has reached the page it lives in.
   const [pending, setPending] = useState(false);
   const [photoError, setPhotoError] = useState(null);
+  // Which identity field has been opened for editing, and the value being
+  // typed. The draft lives here rather than in `profile`, so backing out
+  // discards it and nothing is written on the way.
+  const [editField, setEditField] = useState(null);
+  const [draft, setDraft] = useState('');
+  // Height sits on Stats beside the weight it is measured against, and it is
+  // set once, so it locks the way anything set-once next to a live control
+  // should.
+  const [heightInput, setHeightInput] = useState('');
+  const [heightUnlocked, setHeightUnlocked] = useState(false);
   const [exportState, setExportState] = useState(null);
+  const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
+  // The page's baked theme disagrees with the preference in force, so the page
+  // needs rewriting before the next open. Read only on the way out.
+  const bakeStaleRef = useRef(false);
+  // Set once the store has answered and what is on screen is the whole record.
+  // Only a rebake reads it, and only to refuse to write a partial page.
+  const recordSettledRef = useRef(false);
   const openedRef = useRef(false);
   // The store, once it answers, and the keys this device has written down but
   // has not yet got into it. That set is what lets a session trained out of
@@ -451,29 +537,107 @@ export default function WorkoutTracker() {
 
   useEffect(() => {
     (async () => {
-      const embedded = readEmbedded();
-      let stored;
-      let b;
-      let p;
-      if (hasEmbeddedData(embedded)) {
-        stored = embedded['workout-logs'] || {};
-        b = embedded['bodyweight-logs'] || [];
-        p = embedded.profile;
-      } else {
-        stored = await load('workout-logs', {});
-        b = await load('bodyweight-logs', []);
-        p = await load('profile', null);
+      // Null on any page without the block — `npm run dev`, or any plain host.
+      const embedded = readEmbedded() || {};
+
+      // Where the first render comes from, in order of how current it is.
+      //
+      // The device copy is written on the same debounce as everything else, so
+      // it is up to the minute. The block embedded in the page was up to the
+      // minute too, until v8.1: the app republished itself on every save, and
+      // rewrote the block each time. Once the store took over, the page stopped
+      // republishing and the block froze at whatever was true when it was last
+      // shipped. It has been read first on every open since — which shows the
+      // lifter their training as it stood on that day until the store answers,
+      // and that is what "my changes are missing" looks like from the outside.
+      //
+      // So: the device first, the store second, and the block only when there
+      // is nothing else — which is a page with no store, the case it was
+      // written for.
+      const deviceLogs = await load('workout-logs', null);
+      const deviceBw = await load('bodyweight-logs', null);
+      const deviceProfile = await load('profile', null);
+      const deviceHas = deviceLogs !== null || deviceBw !== null || deviceProfile !== null;
+      note('device copy', {
+        present: deviceHas,
+        days: deviceLogs ? Object.keys(deviceLogs).length : 0,
+        theme: await load('theme', null),
+      });
+
+      const storePromise = getStore();
+      let early = null;
+      if (deviceHas) {
+        early = { logs: deviceLogs || {}, bw: deviceBw || [], profile: deviceProfile };
+      } else if (typeof window !== 'undefined' && typeof window.claude?.use === 'function') {
+        // Nothing on this device and a store to ask. Waiting shows a spinner
+        // for a moment; painting the block shows a log that is days old and
+        // says nothing about being provisional. Bounded, so a store that never
+        // answers costs a moment rather than the app.
+        const waited = await Promise.race([
+          storePromise,
+          new Promise((r) => setTimeout(() => r(SLOW_STORE), 2500)),
+        ]);
+        if (waited && waited !== SLOW_STORE) {
+          const first = await Promise.race([
+            waited.readAll(),
+            new Promise((r) => setTimeout(() => r(null), 2500)),
+          ]);
+          if (first && first.ok && !first.empty) {
+            early = {
+              logs: first.state['workout-logs'] || {},
+              bw: first.state['bodyweight-logs'] || [],
+              profile: first.state.profile,
+            };
+          }
+        }
       }
+      if (!early) {
+        early = {
+          logs: embedded['workout-logs'] || {},
+          bw: embedded['bodyweight-logs'] || [],
+          profile: embedded.profile,
+        };
+      }
+      // The photo is the one thing worth taking from the block even when
+      // something fresher exists, because it changes about never — a stale copy
+      // is the same copy. Losing a face because one document did not come back
+      // is a poor trade, and unlike a log it cannot mislead: it is either the
+      // right picture or none.
+      if (!early.profile?.photo && embedded.profile?.photo) {
+        early.profile = { ...(early.profile || {}), photo: embedded.profile.photo };
+      }
+
+      const stored = early.logs;
+      const b = early.bw;
+      const p = early.profile;
       const { logs: migrated, changed } = migrate(stored);
       const { weights, changed: weightsChanged } = migrateWeights(b, localDateStr());
       setLogs(migrated);
       setBwLogs(weights);
       setProfile(normaliseProfile(p));
 
-      const storedTheme = hasEmbeddedData(embedded)
-        ? embedded.theme
-        : await load('theme', null);
-      if (storedTheme === 'dark' || storedTheme === 'light') setTheme(storedTheme);
+      // The theme is the one thing the embedded block must never decide. It is
+      // frozen at whatever was true when the page was last published, and on
+      // iOS the device copy it would be standing in for is exactly what gets
+      // lost: Safari discards a cross-origin frame's localStorage when the tab
+      // closes. So on the next open there is no device choice, the block says
+      // something months old, and applying it repaints the whole app in the
+      // wrong theme until the store answers a second later.
+      //
+      // Nothing is applied unless this device actually chose it. With no
+      // choice, the boot script's default stands until the store speaks.
+      // The cookie stands in when the device copy has lost it.
+      const savedTheme = await load('theme', null);
+      const deviceTheme = isThemePref(savedTheme) ? savedTheme : null;
+      const deviceChose = isThemePref(deviceTheme);
+      if (deviceChose) setThemePref(deviceTheme);
+      // The block is still good enough to seed an empty store on a first run,
+      // which is the only thing it is used for now.
+      const storedTheme = deviceChose
+        ? deviceTheme
+        : hasEmbeddedData(embedded)
+          ? embedded.theme
+          : null;
 
       setReady(true);
       if (changed) save('workout-logs', migrated);
@@ -500,16 +664,35 @@ export default function WorkoutTracker() {
       // a correction made out of range — is named in the pending set and
       // outranks it.
       pendingKeysRef.current = new Set(await load('db-pending', []));
-      const store = await getStore();
+      const store = await storePromise;
       storeRef.current = store;
+      note('store', { answered: Boolean(store) });
       if (!store) return;
       setDurable(true);
+
+      // The theme, ahead of the record. Whatever is on screen right now came
+      // off the page's bake, which is only as fresh as the last publish — so
+      // if the lifter has changed the setting since, this is the soonest the
+      // app can know. It is one small document rather than the whole log: on
+      // the phone that is the difference between correcting the colour in
+      // under a second and correcting it after three.
+      //
+      // Only when this device has not chosen for itself. A choice made here
+      // outranks the store until it has been written up, which is what the
+      // pending set is for.
+      if (!deviceChose && typeof store.readTheme === 'function') {
+        const early = await store.readTheme();
+        if (isThemePref(early)) {
+          setThemePref(early);
+          note('early theme', { theme: early });
+        }
+      }
 
       const local = {
         'workout-logs': persistable(migrated),
         'bodyweight-logs': weights,
         profile: normaliseProfile(p),
-        theme: storedTheme === 'dark' || storedTheme === 'light' ? storedTheme : 'light',
+        theme: isThemePref(storedTheme) ? storedTheme : 'system',
       };
       // What the page carries is what it last published, and it now
       // publishes almost never. A session trained out of signal was written to
@@ -529,28 +712,73 @@ export default function WorkoutTracker() {
             if (deviceProfile) local.profile = normaliseProfile(deviceProfile);
           } else if (key === KEY.bodyweight) {
             local['bodyweight-logs'] = deviceBw;
-          } else if (key === KEY.theme && (deviceTheme === 'dark' || deviceTheme === 'light')) {
+          } else if (key === KEY.theme && isThemePref(deviceTheme)) {
             local.theme = deviceTheme;
           }
         }
       }
 
       const read = await store.readAll();
+      note('store read', {
+        ok: read.ok,
+        code: read.code || null,
+        empty: read.ok ? read.empty : null,
+        days: read.ok ? Object.keys(read.state['workout-logs'] || {}).length : 0,
+        theme: read.ok ? read.state.theme : null,
+      });
       if (!read.ok) return;
 
       if (read.empty) {
         // First run against an empty store: what the page is carrying moves
         // into it, and the embedded block stops being the record and becomes
         // a backup of it.
+        //
+        // A preference is not a log, though. An empty store can still hold one
+        // — 'empty' counts training days, deliberately — and the theme this
+        // app booted with came off the page, which is a cache of the store and
+        // never a choice made here. Writing local's theme up regardless would
+        // overwrite a real preference with a stale bake, and leave the app
+        // showing it for ever: on this path nothing else ever corrects it.
+        if (!deviceChose && isThemePref(read.state.theme)) {
+          local.theme = read.state.theme;
+          setThemePref(read.state.theme);
+          if (read.state.theme !== deviceTheme) save('theme', read.state.theme);
+          note('adopted theme from an empty store', { theme: read.state.theme });
+        }
         await flushRef.current?.(changedKeys({}, local), local);
+        recordSettledRef.current = true;
         return;
       }
 
-      const merged = mergeState(local, read.state, pendingKeysRef.current);
+      // A theme this device has actually chosen is held for the merge, so it
+      // outranks the store. Not added to the pending set itself — nothing is
+      // outstanding — but changedKeys below still writes it up if the store
+      // disagrees, which quietly corrects a stale row.
+      const heldForMerge = new Set(pendingKeysRef.current);
+      if (deviceChose) heldForMerge.add(KEY.theme);
+      const merged = mergeState(local, read.state, heldForMerge);
       setLogs(merged['workout-logs']);
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
-      if (merged.theme === 'dark' || merged.theme === 'light') setTheme(merged.theme);
+      note('merged', { theme: merged.theme, days: Object.keys(merged['workout-logs'] || {}).length });
+      if (isThemePref(merged.theme)) {
+        setThemePref(merged.theme);
+        // And write it down. Without this the device never learns what the
+        // store already knows, so the boot script finds nothing on every open
+        // and the theme is re-learned from the store each time — which on a
+        // phone is not a flash but a second and a half of the wrong colour,
+        // repeating for ever. The boot report showed exactly that: a device
+        // copy holding three days of training and a theme of null, against a
+        // store that had said "dark" all along.
+        if (merged.theme !== deviceTheme) save('theme', merged.theme);
+        let readBack = null;
+        try {
+          readBack = localStorage.getItem('theme');
+        } catch (e) {
+          readBack = 'threw: ' + String(e);
+        }
+        note('wrote theme', { wanted: merged.theme, localStorage: readBack, page: readPageTheme() });
+      }
       // A merge is not an edit. Without telling the debounced writers what is
       // now on record they read it back as something the lifter typed and
       // write the whole log again.
@@ -558,6 +786,18 @@ export default function WorkoutTracker() {
       savedProfileRef.current = JSON.stringify(normaliseProfile(merged.profile));
       // Whatever this device contributed to that merge still has to get up.
       await flushRef.current?.(changedKeys(read.state, merged), merged);
+      // From here the state on screen is the whole record, so a page written
+      // from it would be a complete one. Nothing may republish before this.
+      recordSettledRef.current = true;
+      // And if the page is still carrying an older answer than the one now in
+      // force — a rebake that never ran because the app was force-quit, or was
+      // out of signal when it did — mark it so leaving this time rewrites it.
+      // Without this the page waits for another tap to heal, which is a step on
+      // every open until the lifter happens to change the setting again.
+      if (isThemePref(merged.theme) && readPageTheme() !== merged.theme) {
+        bakeStaleRef.current = true;
+        note('bake is stale', { page: readPageTheme(), inForce: merged.theme });
+      }
     })();
   }, [load, save, setReady]);
 
@@ -896,6 +1136,7 @@ export default function WorkoutTracker() {
   };
 
   const publishRef = useRef(null);
+  const rebakeRef = useRef(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
   // Every publish rewrites the whole page, so it carries everything — passing
@@ -918,8 +1159,10 @@ export default function WorkoutTracker() {
   };
   publishRef.current = publishAll;
 
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
+  // The preference is what is written down; the resolved theme is a reading of
+  // it and the phone together, and would be wrong on another device.
+  const themeRef = useRef(themePref);
+  themeRef.current = themePref;
 
   // A complete state for the store to write from. writeKeys only touches the
   // keys it is handed, but it reads them all out of one object, so a caller
@@ -988,11 +1231,14 @@ export default function WorkoutTracker() {
     }
     // Opening and closing exercises moves state without changing the record.
     if (snapshot === savedRef.current) return;
+    // Outstanding from the keystroke, not from the timer. The record counts a
+    // set the moment it is typed, so leaving this until the debounce fired let
+    // the button say "Saved" over a set that had not reached anything yet.
+    unpublishedRef.current = true;
+    setPending(true);
     const id = setTimeout(() => {
       const previous = savedRef.current;
       savedRef.current = snapshot;
-      unpublishedRef.current = true;
-      setPending(true);
       const record = JSON.parse(snapshot);
       save('workout-logs', record);
       // The store takes the day that changed on the same debounce as the
@@ -1042,6 +1288,10 @@ export default function WorkoutTracker() {
       // Anything the store still has not taken goes up now: back in signal
       // and closing the app is the last chance the page gets.
       flushRef.current?.([...pendingKeysRef.current], stateOf(record));
+      // The appearance changed while this view was open, so the page it was
+      // loaded from is baked to the old one. Rewrite it now: the reload lands
+      // on a hidden view, and the next open paints once.
+      if (bakeStaleRef.current) rebakeRef.current?.(themeRef.current);
       if (!unpublishedRef.current) return;
       unpublishedRef.current = false;
       setPending(false);
@@ -1057,6 +1307,28 @@ export default function WorkoutTracker() {
       window.removeEventListener('pagehide', flush);
     };
   }, [save]);
+
+  // Height shows what is on record, so "locked until changed" means something:
+  // against an empty box every value differs, and the Save would sit lit from
+  // the moment the screen opened.
+  useEffect(() => {
+    if (!ready) return;
+    setHeightInput(String(profile.heightCm || ''));
+  }, [ready, profile.heightCm]);
+
+  // Leaving a screen abandons whatever was half-typed on it. Coming back to a
+  // field still holding an edit from ten minutes ago is a trap: it reads as a
+  // value that was chosen rather than one walked away from, and its Save may
+  // be sitting lit over it. Keyed on the section alone — the record it resets
+  // to is read at the moment of the change, not followed.
+  useEffect(() => {
+    const known = weightHistory.find((e) => e.date === today) || weightHistory[0];
+    setWeightInput(known ? String(known.weight) : '');
+    setHeightInput(String(profile.heightCm || ''));
+    setHeightUnlocked(false);
+    setEditField(null);
+    setDraft('');
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveLogs = async () => {
     const record = persistable(logs);
@@ -1084,50 +1356,56 @@ export default function WorkoutTracker() {
   // Saving the profile also files the weight against today, so the record of
   // what the lifter weighed keeps its dates without asking them to log it in a
   // second place.
-  const saveProfile = async () => {
-    const clean = {
-      ...profile,
-      name: String(profile.name || '').trim(),
-      heightCm: String(profile.heightCm || '').trim(),
-    };
-    const weight = String(weightInput || '').trim();
-    const onFile = weightHistory.find((e) => e.date === today);
-    let nextBw = weightHistory;
-    if (weight && Number(weight) > 0 && (!onFile || String(onFile.weight) !== weight)) {
-      // No `notes` key. It is the marker that says an entry came from the
-      // scrapped Bodyweight tab, and writing one here would make every weight
-      // the profile saves look legacy — so the migration would re-date it
-      // every morning and eat the history it is meant to keep.
-      nextBw = [
-        ...weightHistory.filter((e) => e.date !== today),
-        { date: today, weight },
-      ].sort((a, b) => (a.date < b.date ? 1 : -1));
-    }
-    setProfile(clean);
+  // A field commits from its own screen. The debounced writer picks the change
+  // up out of `profile` exactly as it always did, so persistence is untouched.
+  const commitField = (key, value) => {
+    setProfile((p) => ({ ...p, [key]: typeof value === 'string' ? value.trim() : value }));
+  };
+
+  const openField = (key) => {
+    setDraft(String(profile[key] ?? ''));
+    setEditField(key);
+  };
+  // Backing out of an edit discards it, silently, the way every app that does
+  // this does. A dialog on a path walked twice a year is not worth its weight.
+  const closeField = () => {
+    setEditField(null);
+    setDraft('');
+  };
+  const commitDraft = () => {
+    if (!editField || !draftReady) return;
+    commitField(editField, draft);
+    closeField();
+  };
+
+  // Weight is the one measurement that moves, and it files against today.
+  const saveWeight = async () => {
+    if (!weightReady) return;
+    const weight = num(String(weightInput).trim());
+    const nextBw = [
+      ...weightHistory.filter((e) => e.date !== today),
+      { date: today, weight },
+    ].sort((a, b) => (a.date < b.date ? 1 : -1));
     setBwLogs(nextBw);
-    // Show what is on record, not what was refused. A 0 typed into the weight
-    // field is not a weight, so it is not saved — and leaving it on screen said
-    // it had been, while Stats went on using the real one.
-    const onRecord = nextBw.find((e) => e.date === today) || nextBw[0];
-    setWeightInput(onRecord ? String(onRecord.weight) : '');
-    const previousProfile = savedProfileRef.current;
-    savedProfileRef.current = JSON.stringify(clean);
-    unpublishedRef.current = false;
-    setPending(false);
-    const okProfile = await save('profile', clean);
-    const okWeight = nextBw === weightHistory ? true : await save('bodyweight-logs', nextBw);
-    const profileKeys = new Set(pendingKeysRef.current);
-    for (const k of changedKeys(
-      { profile: JSON.parse(previousProfile || '{}'), 'bodyweight-logs': weightHistory },
-      { profile: clean, 'bodyweight-logs': nextBw }
-    ))
-      profileKeys.add(k);
-    await flushKeys([...profileKeys], stateOf(persistable(logs), nextBw, clean));
-    const published = await publishAll(persistable(logs), nextBw, clean);
-    if ((okProfile && okWeight) || published) {
-      setSavedFlash('profile');
-      setTimeout(() => setSavedFlash(null), 1500);
-    }
+    await save('bodyweight-logs', nextBw);
+    const keys = new Set(pendingKeysRef.current);
+    keys.add(KEY.bodyweight);
+    await flushKeys([...keys], stateOf(persistable(logs), nextBw));
+    await publishAll(persistable(logs), nextBw);
+    setSavedFlash('weight');
+    setTimeout(() => setSavedFlash(null), 1500);
+  };
+
+  const unlockHeight = () => {
+    setHeightInput(String(profile.heightCm || ''));
+    setHeightUnlocked(true);
+  };
+  const saveHeight = () => {
+    if (!heightReady) return;
+    commitField('heightCm', num(String(heightInput).trim()));
+    setHeightUnlocked(false);
+    setSavedFlash('height');
+    setTimeout(() => setSavedFlash(null), 1500);
   };
 
   // The whole record as one file: every session, the weights, the profile and
@@ -1188,16 +1466,68 @@ export default function WorkoutTracker() {
   useEffect(() => {
     document.documentElement.dataset.appTheme = theme;
     document.documentElement.style.colorScheme = theme;
+    // The boot script paints the ground inline, because until the stylesheet
+    // parses the host's light reset is what is showing. Once it has parsed,
+    // that inline value has to go: an inline style outranks the stylesheet, so
+    // leaving it pins the app to whatever the first frame guessed and no theme
+    // change can ever be seen again. The suite caught exactly that.
+    document.documentElement.style.backgroundColor = '';
+    if (document.body) document.body.style.backgroundColor = '';
   }, [theme]);
+
+  // The page carries the theme baked into it, and that bake is only as fresh
+  // as the last publish. Nothing else refreshes it — the store is the record
+  // and a save deliberately does not republish — so a preference changed here
+  // would disagree with the page for ever, and every open would paint the old
+  // colour before correcting itself. Measured on the lifter's phone: not one
+  // step, a step on every open, indefinitely.
+  //
+  // So changing the appearance rewrites the page. This is the one deliberate
+  // exception to "a save must never republish", and it is not a save: it is a
+  // change to how the page itself is written, made from a screen where nothing
+  // is being logged. The reload it causes is the cost, and it is paid once per
+  // change rather than once per open.
+  const rebakeAppearance = async (pref) => {
+    // Not before the store has answered. Publishing writes the whole document
+    // including the embedded block, and doing that from a half-loaded state
+    // would bake a partial record into the page.
+    if (!recordSettledRef.current) return false;
+    const publish = publisherRef.current;
+    if (!publish) return false;
+    // The page already says this. Publishing would reload every open view to
+    // change nothing, which is the thing the guard on publishAll exists to
+    // prevent.
+    if (readPageTheme() === pref) return false;
+    const res = await publish({
+      'workout-logs': persistable(logsRef.current),
+      'bodyweight-logs': bwRef.current,
+      profile: profileRef.current,
+      theme: pref,
+    });
+    if (res.ok) bakeStaleRef.current = false;
+    note('rebaked the page', { theme: pref, ok: res.ok, reason: res.reason || null });
+    return res.ok;
+  };
+  // The hide handler is bound once and must not close over a stale copy.
+  rebakeRef.current = rebakeAppearance;
 
   // Remember it on the device straight away, so the switch is instant rather
   // than waiting on the next save.
-  const toggleTheme = () => {
-    const next = theme === 'light' ? 'dark' : 'light';
-    setTheme(next);
-    save('theme', next);
-    flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, next));
+  const applyAppearance = (pref) => {
+    if (!isThemePref(pref)) return;
+    setThemePref(pref);
+    save('theme', pref);
+    flushKeys([KEY.theme], stateOf(undefined, undefined, undefined, pref));
+    // The store now; the page on the way out. Republishing reloads the view,
+    // and doing that under the lifter's finger is a flicker a second after they
+    // tapped — the thing they came to this screen to stop. Held until the app
+    // is hidden, the same reload lands while nobody is looking, and what they
+    // come back to is a correctly baked page.
+    bakeStaleRef.current = true;
   };
+  // The button in the header is a quick override: it sets the opposite of what
+  // is on screen now, whether that came from the phone or from a choice.
+  const toggleTheme = () => applyAppearance(theme === 'light' ? 'dark' : 'light');
 
   useEffect(() => {
     if (!pinned) setDate(today);
@@ -1255,7 +1585,9 @@ export default function WorkoutTracker() {
     // `ready` matters: until the log has loaded the app renders a spinner and
     // there is no bar to measure, and the view has not changed to prompt a
     // second look.
-  }, [view, ready]);
+    // editField matters as much as view: the bar unmounts while a field is
+    // open, so the capsule has to be measured again when it comes back.
+  }, [view, ready, editField]);
 
   // The first placement is where the capsule already is, not somewhere it
   // slides in from.
@@ -1282,9 +1614,11 @@ export default function WorkoutTracker() {
     setOverrides(wanted && wanted.date === date ? { [`${wanted.slot}@${date}`]: true } : {});
   }, [date]);
 
-  // The weight on the profile is a current weight, not a blank form to fill in
-  // daily: it shows today's entry if there is one, and the last one on record
-  // otherwise.
+  // The weight field is a current weight, not a blank form to fill in daily: it
+  // shows today's entry if there is one, and the last one on record otherwise.
+  // So Save starts live on a day nothing has been logged — pressing it files
+  // that weight against today, which is a change — and locks once it matches
+  // what today already holds.
   useEffect(() => {
     const known = weightHistory.find((e) => e.date === today) || weightHistory[0];
     setWeightInput(known ? String(known.weight) : '');
@@ -1311,6 +1645,33 @@ export default function WorkoutTracker() {
   const dueOn = (iso) => SCHEDULE.find((x) => x.dow === dowOf(iso)) || null;
 
   // The Save bar belongs to a session in progress, and so to Home alone.
+  const editing = editField ? fieldByKey(editField) : null;
+  const draftValid = editing ? validField(editing.key, draft, today) : false;
+  const draftChanged = editing
+    ? String(draft).trim() !== String(profile[editing.key] ?? '').trim()
+    : false;
+  // Both halves, always together: a Save that lights for an unchanged value
+  // writes what is already there, and one that lights for an invalid value
+  // writes rubbish.
+  const draftReady = draftValid && draftChanged;
+
+  const todayWeightEntry = weightHistory.find((e) => e.date === today) || null;
+  const weightReady =
+    plausibleWeight(weightInput) &&
+    (!todayWeightEntry || Number(todayWeightEntry.weight) !== Number(weightInput));
+  const heightReady =
+    plausibleHeight(heightInput) && Number(heightInput) !== Number(profile.heightCm);
+  const heightLocked = Boolean(profile.heightCm) && !heightUnlocked;
+
+  // What a row shows to the right of its label. Empty reads as "Not set" so an
+  // unfilled field looks unfilled rather than broken.
+  const rowValue = (f) => {
+    const v = profile[f.key];
+    if (!v) return null;
+    if (f.key === 'dob') return age === null ? prettyDate(v) : `${prettyDate(v)} · ${age}`;
+    return v;
+  };
+
   const showSave =
     view === 'home' && !locked && !pastRecord && !restView && !unrecorded;
 
@@ -1348,9 +1709,11 @@ export default function WorkoutTracker() {
     if (missing.length) {
       return {
         title: missing.length > 1 ? 'Two numbers missing' : 'One number missing',
+        // The fields are directly above this message now, so it points at
+        // them rather than sending the reader to another tab.
         body: `BMI needs your ${missing.join(' and your ')}. ${
-          missing.length > 1 ? 'Both live' : 'It lives'
-        } on the profile.`,
+          missing.length > 1 ? 'Both are' : 'It is'
+        } at the top of this screen.`,
       };
     }
     const wrong = [];
@@ -1358,7 +1721,7 @@ export default function WorkoutTracker() {
     if (!plausibleWeight(latestWeight.weight)) wrong.push(`${num(latestWeight.weight)} kg`);
     return {
       title: 'That does not look right',
-      body: `There is no BMI to give for ${wrong.join(' and ')}. Worth checking on the profile.`,
+      body: `There is no BMI to give for ${wrong.join(' and ')}. Worth checking at the top of this screen.`,
     };
   })();
 
@@ -1384,7 +1747,13 @@ export default function WorkoutTracker() {
               <button onClick={() => setView('profile')} aria-label="Profile">
                 <Avatar profile={profile} size={36} />
               </button>
-              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+              <button
+                onClick={() => setShowDiag((v) => !v)}
+                aria-label="Diagnostics"
+                className="text-xs text-dim nums font-semibold"
+              >
+                v{APP_VERSION}
+              </button>
             </div>
           </div>
           <div className="mt-1 text-[15px] text-dim font-semibold font-semibold">
@@ -1483,7 +1852,7 @@ export default function WorkoutTracker() {
             </span>
           </div>
         </header>
-      ) : (
+      ) : editing ? null : (
         <header className="sticky top-0 z-20 bg-night border-b border-line px-4 pt-4 pb-3">
           <div className="flex items-center justify-between gap-3">
             <h1 className="font-display text-2xl font-bold uppercase tracking-wider flex items-center gap-2">
@@ -1505,7 +1874,13 @@ export default function WorkoutTracker() {
               >
                 {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
               </button>
-              <span className="text-xs text-dim nums font-semibold">v{APP_VERSION}</span>
+              <button
+                onClick={() => setShowDiag((v) => !v)}
+                aria-label="Diagnostics"
+                className="text-xs text-dim nums font-semibold"
+              >
+                v{APP_VERSION}
+              </button>
             </div>
           </div>
         </header>
@@ -2123,6 +2498,119 @@ export default function WorkoutTracker() {
 
       {view === 'stats' && (
         <div className="px-4 mt-4">
+          {/* Both inputs to BMI, on the screen that shows it. They used to live
+              on Profile, a tab away from the number they make, and the history
+              below said so in as many words: "add your weight on the profile".
+              Measurements sit above the reading rather than below it because
+              the WHO section is long, and a weight field under it would be off
+              the bottom of the screen every time. */}
+          <div className="bg-surface border border-line rounded-2xl p-5 mb-4">
+            <h2 className="text-xs uppercase tracking-widest text-dim font-bold">Measurements</h2>
+
+            <label htmlFor="stats-weight" className="text-[13px] font-bold mt-4 block">
+              Weight
+            </label>
+            <div className="flex gap-2 mt-1.5">
+              <div className="relative flex-1 min-w-0">
+                <input
+                  id="stats-weight"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  value={weightInput}
+                  placeholder="69"
+                  onChange={(e) => {
+                    const clean = cleanNumber(e.target.value, true, MAX.bodyWeight);
+                    if (clean !== null) setWeightInput(clean);
+                  }}
+                  className="w-full bg-raised border border-line rounded-xl pl-4 pr-10 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-dim font-bold pointer-events-none">
+                  kg
+                </span>
+              </div>
+              <button
+                onClick={saveWeight}
+                disabled={!weightReady}
+                aria-label="Save weight"
+                className={`px-5 rounded-xl text-sm font-bold shrink-0 transition ${
+                  weightReady ? 'bg-mint text-night' : 'bg-raised text-dim/60 border border-line'
+                }`}
+              >
+                {savedFlash === 'weight' ? <Check size={16} /> : 'Save'}
+              </button>
+            </div>
+            <p className="text-[13px] text-dim font-semibold mt-2 nums">
+              {todayWeightEntry
+                ? `${todayWeightEntry.weight} kg on record for today`
+                : 'Nothing recorded today.'}
+            </p>
+
+            {/* Set once, and locked because it sits next to a field that is
+                typed into every week. */}
+            <div className="border-t border-line mt-4 pt-4">
+              {heightLocked ? (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-bold">Height</span>
+                    <span className="flex items-center gap-3">
+                      <span className="text-[15px] font-semibold nums">
+                        {profile.heightCm} cm
+                      </span>
+                      <button
+                        onClick={unlockHeight}
+                        className="text-[13px] font-bold text-mint"
+                      >
+                        Change
+                      </button>
+                    </span>
+                  </div>
+                  <p className="flex items-center gap-1.5 text-[13px] text-dim mt-2">
+                    <Lock size={12} /> Set once, so a stray tap cannot move it.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="stats-height" className="text-[13px] font-bold block">
+                    Height
+                  </label>
+                  <div className="flex gap-2 mt-1.5">
+                    <div className="relative flex-1 min-w-0">
+                      <input
+                        id="stats-height"
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        value={heightInput}
+                        placeholder="173"
+                        onChange={(e) => {
+                          const clean = cleanNumber(e.target.value, false, MAX.heightCm);
+                          if (clean !== null) setHeightInput(clean);
+                        }}
+                        className="w-full bg-raised border border-line rounded-xl pl-4 pr-10 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-dim font-bold pointer-events-none">
+                        cm
+                      </span>
+                    </div>
+                    <button
+                      onClick={saveHeight}
+                      disabled={!heightReady}
+                      aria-label="Save height"
+                      className={`px-5 rounded-xl text-sm font-bold shrink-0 transition ${
+                        heightReady
+                          ? 'bg-mint text-night'
+                          : 'bg-raised text-dim/60 border border-line'
+                      }`}
+                    >
+                      {savedFlash === 'height' ? <Check size={16} /> : 'Save'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           {bmi === null ? (
             <div className="bg-surface border border-line rounded-2xl px-5 py-10 text-center">
               <div className="mx-auto w-12 h-12 rounded-full bg-raised text-dim flex items-center justify-center">
@@ -2134,12 +2622,6 @@ export default function WorkoutTracker() {
               <div className="text-[15px] text-dim font-semibold mt-2 leading-relaxed max-w-[22rem] mx-auto">
                 {statsGap.body}
               </div>
-              <button
-                onClick={() => setView('profile')}
-                className="mt-5 bg-mint text-night rounded-xl px-5 py-3 text-sm font-bold"
-              >
-                Go to profile
-              </button>
             </div>
           ) : (
             <>
@@ -2241,7 +2723,7 @@ export default function WorkoutTracker() {
             <div className="space-y-2">
               {weightHistory.length === 0 && (
                 <div className="text-[15px] text-dim">
-                  No entries yet. Add your weight on the profile and it is kept here by date.
+                  No entries yet. Save a weight above and it is kept here by date.
                 </div>
               )}
               {weightHistory.map((e, i) => {
@@ -2278,11 +2760,16 @@ export default function WorkoutTracker() {
         </div>
       )}
 
-      {view === 'profile' && (
-        <div className="px-4 mt-4">
+      {view === 'profile' && editing === null && (
+        <div className="px-4 mt-4 space-y-4">
+          {/* Your face, at a size worth looking at. On a screen that is now
+              nothing but identity, it is the content rather than a competitor
+              for the top of it. */}
           <div className="bg-surface border border-line rounded-2xl p-5">
             <div className="flex items-center gap-4">
-              <Avatar profile={profile} size={72} />
+              <label htmlFor="profile-photo" className="cursor-pointer shrink-0">
+                <Avatar profile={profile} size={72} />
+              </label>
               <div className="min-w-0">
                 <label
                   htmlFor="profile-photo"
@@ -2312,105 +2799,58 @@ export default function WorkoutTracker() {
               </div>
             </div>
             {photoError && <div className="mt-3 text-[13px] text-danger">{photoError}</div>}
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-5 block">
-              Name
-            </label>
-            <input
-              type="text"
-              value={profile.name}
-              onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Your name"
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold focus:border-mint focus:outline-none"
-            />
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Date of birth
-            </label>
-            <input
-              type="date"
-              value={profile.dob}
-              max={today}
-              onChange={(e) => setProfile((p) => ({ ...p, dob: e.target.value }))}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
-            {/* Age is worked out from the date, so it can never go stale. */}
-            <div className="text-[13px] text-dim font-semibold mt-1.5 nums">
-              {age === null ? 'Your age is worked out from this.' : `${age} years old`}
-            </div>
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Sex
-            </label>
-            <div className="flex gap-2 mt-1.5">
-              {SEXES.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setProfile((p) => ({ ...p, sex: p.sex === s ? '' : s }))}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition ${
-                    profile.sex === s
-                      ? 'bg-fg text-night border-fg'
-                      : 'bg-raised text-dim border-line'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Height (cm)
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              value={profile.heightCm}
-              placeholder="178"
-              onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true, MAX.heightCm);
-                if (clean !== null) setProfile((p) => ({ ...p, heightCm: clean }));
-              }}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
-
-            <label className="text-xs uppercase tracking-widest text-dim font-bold mt-4 block">
-              Weight (kg)
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              value={weightInput}
-              placeholder="69"
-              onChange={(e) => {
-                const clean = cleanNumber(e.target.value, true, MAX.bodyWeight);
-                if (clean !== null) setWeightInput(clean);
-              }}
-              className="w-full mt-1.5 bg-raised border border-line rounded-xl px-4 py-3 text-base font-semibold nums focus:border-mint focus:outline-none"
-            />
           </div>
 
-          <button
-            onClick={saveProfile}
-            className="w-full mt-3 bg-mint text-night rounded-xl py-3.5 font-bold flex items-center justify-center gap-2"
-          >
-            {savedFlash === 'profile' ? (
-              <>
-                <Check size={18} /> Saved
-              </>
-            ) : (
-              'Save profile'
-            )}
-          </button>
+          {/* A row is a door, not a field. The value is what you read; editing
+              happens where it has your whole attention. */}
+          <div className="bg-surface border border-line rounded-2xl overflow-hidden">
+            {PROFILE_FIELDS.map((f, i) => {
+              const shown = rowValue(f);
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => openField(f.key)}
+                  aria-label={`Edit ${f.label}`}
+                  className={`w-full flex items-center gap-3 px-4 py-4 text-left ${
+                    i > 0 ? 'border-t border-line' : ''
+                  }`}
+                >
+                  <span className="text-[15px] font-semibold shrink-0">{f.label}</span>
+                  <span
+                    className={`flex-1 min-w-0 text-[15px] text-right truncate ${
+                      shown ? 'text-dim' : 'text-dim/60'
+                    }`}
+                  >
+                    {shown || 'Not set'}
+                  </span>
+                  <ChevronRight size={18} className="text-dim shrink-0" />
+                </button>
+              );
+            })}
+          </div>
 
-          {/* Only when this view can actually hand over a file. An export
-              button that cannot export is worse than none. */}
+          <div className="bg-surface border border-line rounded-2xl overflow-hidden">
+            <button
+              onClick={() => openField(APPEARANCE.key)}
+              aria-label={`Edit ${APPEARANCE.label}`}
+              className="w-full flex items-center gap-3 px-4 py-4 text-left"
+            >
+              <span className="text-[15px] font-semibold shrink-0">{APPEARANCE.label}</span>
+              <span className="flex-1 min-w-0 text-[15px] text-right truncate text-dim">
+                {labelOfPref(themePref)}
+                {themePref === 'system' ? ` · ${theme}` : ''}
+              </span>
+              <ChevronRight size={18} className="text-dim shrink-0" />
+            </button>
+          </div>
+
+          {/* Your data, which is what this screen is about once the details
+              above are set. */}
           {downloader && (
             <button
               onClick={exportLog}
               aria-label="Export log"
-              className="w-full mt-2 bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2"
+              className="w-full bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2"
             >
               {exportState === 'saved' ? (
                 <>
@@ -2424,9 +2864,135 @@ export default function WorkoutTracker() {
             </button>
           )}
           {exportState === 'failed' && (
-            <p className="text-xs text-dim mt-2 text-center">
-              That file could not be saved.
-            </p>
+            <p className="text-xs text-dim text-center">That file could not be saved.</p>
+          )}
+        </div>
+      )}
+
+      {/* One field, its own screen. Save sits top right rather than along the
+          bottom: with a keyboard up, a fixed bottom bar in an iframe is the
+          same geometry that hid the nav behind the home indicator, and the two
+          corners read plainly as discard and commit. */}
+      {view === 'profile' && editing && (
+        <div className="px-4 pt-5">
+          <div className="flex items-center gap-1 -ml-2">
+            <button onClick={closeField} aria-label="Back" className="p-2 rounded-full text-fg">
+              <ChevronLeft size={24} />
+            </button>
+            <h2 className="font-display text-lg font-bold flex-1">{editing.label}</h2>
+            {editing.kind !== 'choice' && (
+              <button
+                onClick={commitDraft}
+                disabled={!draftReady}
+                aria-label={`Save ${editing.label}`}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition ${
+                  draftReady ? 'bg-mint text-night' : 'bg-raised text-dim/60 border border-line'
+                }`}
+              >
+                Save
+              </button>
+            )}
+          </div>
+
+          {editing.kind === 'choice' ? (
+            /* A choice cannot be half made or wrong, so there is nothing for a
+               Save to confirm. Tapping is the answer. */
+            <div className="bg-surface border border-line rounded-2xl overflow-hidden mt-5">
+              {editing.options.map((option, i) => {
+                const chosen =
+                  editing.key === APPEARANCE.key
+                    ? labelOfPref(themePref) === option
+                    : profile[editing.key] === option;
+                return (
+                  <button
+                    key={option}
+                    onClick={() => {
+                      if (editing.key === APPEARANCE.key) applyAppearance(prefOfLabel(option));
+                      else commitField(editing.key, option);
+                      closeField();
+                    }}
+                    className={`w-full flex items-center justify-between gap-3 px-4 py-4 text-left ${
+                      i > 0 ? 'border-t border-line' : ''
+                    }`}
+                  >
+                    <span className="text-[15px] font-semibold">{option}</span>
+                    {chosen && <Check size={18} className="text-mint" />}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mt-5">
+              <div
+                className={`relative bg-surface border rounded-2xl px-4 pt-2.5 pb-2 ${
+                  draftReady ? 'border-mint' : 'border-line focus-within:border-mint'
+                }`}
+              >
+                {/* The label stays put while you type, so a screen with one box
+                    on it still says what the box is. */}
+                <label
+                  htmlFor="field-input"
+                  className="block text-[11px] uppercase tracking-widest text-dim font-bold"
+                >
+                  {editing.label}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="field-input"
+                    autoFocus
+                    type={editing.type}
+                    inputMode={editing.inputMode}
+                    max={editing.kind === 'date' ? today : undefined}
+                    value={draft}
+                    placeholder={editing.placeholder}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      // The return key is the commit for anything with a
+                      // keyboard, so the corner is never a journey.
+                      if (e.key === 'Enter') commitDraft();
+                    }}
+                    className={`flex-1 min-w-0 bg-transparent py-1 text-base font-semibold focus:outline-none ${
+                      editing.kind === 'date' ? 'nums' : ''
+                    }`}
+                  />
+                  {draftReady ? (
+                    <span
+                      aria-label="Ready to save"
+                      className="w-6 h-6 rounded-full bg-mint text-night flex items-center justify-center shrink-0"
+                    >
+                      <Check size={14} strokeWidth={3} />
+                    </span>
+                  ) : (
+                    draft !== '' &&
+                    editing.kind !== 'date' && (
+                      <button
+                        onClick={() => setDraft('')}
+                        aria-label="Clear"
+                        className="w-6 h-6 rounded-full bg-dim/25 text-fg flex items-center justify-center shrink-0"
+                      >
+                        <X size={14} strokeWidth={3} />
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+
+              {editing.key === 'dob' && draftValid && (
+                <p className="text-[13px] text-dim font-semibold mt-2 nums">
+                  {ageOn(draft, today)} years old
+                </p>
+              )}
+              {/* Also when the field has been cleared: emptying a required
+                  value is exactly when the Save going dark needs explaining. */}
+              {!draftValid && (draft !== '' || draftChanged) && (
+                <p className="text-[13px] text-danger mt-2">{invalidReason(editing.key)}</p>
+              )}
+              {editing.hint && <p className="text-[13px] text-dim mt-2">{editing.hint}</p>}
+            </div>
+          )}
+
+          {editing.kind === 'choice' && editing.hint && (
+            <p className="text-[13px] text-dim mt-3">{editing.hint}</p>
           )}
         </div>
       )}
@@ -2442,6 +3008,51 @@ export default function WorkoutTracker() {
           below the bar were clear windows onto the page: an exercise name
           scrolling past landed there razor-sharp between two frosted panels,
           which reads as a mistake rather than as glass. */}
+      {showDiag && (
+        <div className="fixed inset-0 z-40 bg-night/95 overflow-auto px-4 py-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide">
+              Boot report
+            </h2>
+            <button
+              onClick={() => setShowDiag(false)}
+              aria-label="Close diagnostics"
+              className="bg-raised border border-line rounded-xl px-3 py-2 text-[13px] font-bold"
+            >
+              Close
+            </button>
+          </div>
+          <p className="text-[13px] text-dim mb-4">
+            What this copy of the app did when it started. One screenshot of this
+            says more than a recording of the screen.
+          </p>
+          <div className="bg-surface border border-line rounded-2xl p-4 space-y-3 font-mono text-[12px] leading-relaxed break-words">
+            <div>
+              <span className="text-dim">version </span>
+              <span className="font-bold">{APP_VERSION}</span>
+              <span className="text-dim"> · showing </span>
+              <span className="font-bold">{theme}</span>
+              <span className="text-dim"> · preference </span>
+              <span className="font-bold">{themePref}</span>
+            </div>
+            {(typeof window !== 'undefined' ? window.__trace || [] : []).map((row, i) => (
+              <div key={i} className="border-t border-line pt-2">
+                <span className="text-dim">{String(row.at).padStart(5)}ms </span>
+                <span className="font-bold">{row.step}</span>
+                <div className="text-dim">{JSON.stringify(row.detail)}</div>
+              </div>
+            ))}
+            {(typeof window === 'undefined' || !(window.__trace || []).length) && (
+              <div className="text-dim">
+                No boot record. This build predates the report — the version above
+                is not the one that writes it.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {editing === null && (
       <div className="app-bar fixed bottom-0 left-0 right-0 z-30 px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none backdrop-blur-lg">
         {showSave && (
           <button
@@ -2458,18 +3069,21 @@ export default function WorkoutTracker() {
                 : 'bg-[var(--bar-bg)] backdrop-blur-2xl backdrop-saturate-150 border border-line/50 text-dim'
             }`}
           >
-            {/* One control, two states. Typing is already the save, so a filled
-                button sitting there all session is loud about nothing; it fills
-                only when something has not reached the published page yet, and
-                otherwise says so quietly. It stays pressable either way — being
-                able to press it is the point of having it. The accessible name
-                does not change with the state. */}
+            {/* Three states, because three things can be true. Green and
+                pressable when something is written down and not yet filed.
+                "Saved" when the session holds sets and they are all on record.
+                And on a session with nothing in it, it says so — "Saved" there
+                was a claim about a save that never happened, which is what
+                made the button impossible to trust. The accessible name stays
+                the same in all three. */}
             {pending ? (
               `Save ${tab} ${variant}`
-            ) : (
+            ) : hasRecord ? (
               <>
                 <Check size={15} /> Saved
               </>
+            ) : (
+              'No sets entered yet'
             )}
           </button>
         )}
@@ -2526,6 +3140,7 @@ export default function WorkoutTracker() {
           })}
         </nav>
       </div>
+      )}
     </div>
   );
 }

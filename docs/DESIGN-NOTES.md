@@ -554,3 +554,565 @@ Shape:
 
 It has nothing to do with exercise IDs and could ship on its own; it is bundled
 with them because that is the next time the app is opened for work.
+
+## v8.3 — Profile is who you are, Stats is what you measure
+
+The Save button had lost its job. Before v8.1 it meant "not yet in the
+published page", which lasted until you pressed it. Once the store took writes
+half a second after typing, nothing was ever outstanding, so the button sat
+permanently in its quiet state announcing "Saved" — including on an empty
+session it had saved nothing of. The word was the bug: "Saved" is a claim about
+the past. A greyed-out "Save" claims nothing.
+
+Four apps were looked at: WhatsApp Business, GymNation, Instagram, WeChat. What
+they agree on is that a set-once field is a row you read, and editing it happens
+on a screen of its own with a commit that stays locked until something changes.
+What they disagree on is where that commit lives — WhatsApp puts a bar along the
+bottom, Instagram and WeChat put it in the top right. WeChat contradicts itself
+between two of its own screens, so none of them is scripture.
+
+### The reframe
+
+Every one of those is a profile you revisit. Ours is not. Five of six fields are
+set once at first run and never touched again; the sixth, weight, is typed every
+week. So the screen's job was never "edit your profile".
+
+That splits the app cleanly:
+
+- **Profile — who you are.** Photo, name, email, mobile, date of birth, gender.
+  A record, not a form.
+- **Stats — what you measure.** Height, weight, BMI, the WHO bands, the history.
+
+Height and weight belong together because they are the two inputs to one
+number. Splitting them across tabs was the original mistake, and the app had
+been admitting it: Stats already held the BMI *and* the weight history, and its
+empty state read "add your weight on the profile" — pointing at another tab to
+fix a number it was showing. Moving the inputs deleted that sentence.
+
+### Where the commit went, and why it is not taste
+
+Top right. On a single-field screen the keyboard is up, and a `position: fixed`
+bottom bar in iOS Safari inside a cross-origin iframe is the same geometry that
+hid the nav behind the home indicator in v8.2 — fixed is relative to the layout
+viewport, and in an iframe the offsets to correct it cannot be read. Instagram
+and WeChat are probably at the top for the same reason. WhatsApp can afford the
+bottom because it is native and gets the inset for free.
+
+The return key also commits, so the corner is never a journey for a text field.
+
+### One rule instead of a per-field argument
+
+**A Save exists where a value can be incomplete or wrong.** A half-typed name,
+a height of 1, a year fat-fingered — those need a moment to say "yes, that one".
+A choice cannot be either: the instant you tap "Female" your intent is whole, so
+a Save there is a redundant tap carrying no information the selection does not.
+Gender commits on tap and returns; text, number and date fields keep the locked
+Save.
+
+That rule answers the same question for every field added later.
+
+### Odds and ends
+
+- Height gets a lock rather than a row, because it sits *next to* a live control
+  rather than among set-once ones. Same guard, different context.
+- Gender offers "Prefer not to say", and says on screen that BMI uses the same
+  scale for everyone — which is the honest thing to say about a field the app
+  collects and never reads.
+- Backing out of an edit discards it silently. All four references do, and a
+  dialog on a path walked twice a year is not worth its weight.
+- The edit screen hides both the app header and the bottom bar. A back arrow
+  plus a tab bar is two navigation models arguing on one screen.
+- An implausible height or weight can no longer be entered at all — the Save
+  never lights — so "that does not look right" is now only reachable from data
+  recorded before those guards existed. It still has a test, seeded directly.
+
+## v9.0 — System, Light, Dark, and why it took five versions
+
+A flash on every open: choose day, close the app, and it comes back dark for
+about a second before correcting. Four attempts, and the first three fixed real
+faults that were not this one.
+
+- **v8.5** made the device's copy beat the store. Real bug, wrong one.
+- **v8.6** set the theme before React mounted rather than from an effect. Also
+  real: the palette is dark by default and light is what `data-app-theme`
+  switches on, so a document without that attribute is a dark document.
+- **v8.7** moved that boot script ahead of the 26KB stylesheet it governs — in
+  the published page it had been sitting at byte 26375 with the stylesheet at
+  155. Real again, still not it.
+- **v8.8** found it: on iOS the artifact runs in a cross-origin frame whose
+  localStorage Safari discards with the tab. `sync.js` has carried a comment
+  saying so since it was written. So on every reopen there was no device copy,
+  and the load fell back to the theme embedded in the page — frozen at publish
+  time, saying dark since the v8.3 build, while the store said light. Light,
+  dark, light.
+- **v8.9** replaced that with a hardcoded light default, which fixed day mode by
+  breaking night mode. A fixed guess is wrong for half the people.
+
+### What the whole thing was really about
+
+An app-held light/dark preference needs somewhere durable to read it from
+*before the first paint*. In this frame there is nowhere: storage is discarded,
+the page's copy is stale, and the store is a network call. Every version above
+was an attempt to work around a preference the device cannot hold.
+
+So the preference changed shape. **System is the default**, and System resolves
+from `prefers-color-scheme` — synchronously, correctly, every time, with nothing
+to remember. Light and Dark remain as explicit overrides for anyone who wants
+the app to disagree with their phone, and those still ride in the store.
+
+On System there is one painted frame and no flash at all, on either kind of
+phone, with the device copy present or wiped. That is the cure; everything
+before it was narrowing.
+
+### Where it lives
+
+An **Appearance** row on Profile, opening the same choice screen as Gender —
+commit on tap, no Save, because a choice cannot be half-made. It sits in a card
+of its own: it is a setting for this device, not a fact about the lifter, and it
+must never travel into `meta/profile`.
+
+The moon in the header stays and still flips in one tap. It now means "override
+with the opposite of what I am looking at", which is what pressing it always
+meant in practice.
+
+### Two things worth keeping
+
+`prefers-color-scheme` is watched rather than sampled, so on System the app
+follows the phone turning over at sunset rather than at the next open.
+
+The boot script in `index.html` and the `useState` initialiser resolve the
+preference by identical rules. If those two ever disagree, the disagreement is
+a repaint — which is the whole bug, reintroduced.
+
+## v9.1 — the frozen block, and what it had been doing since v8.1
+
+The theme flash was not a theme bug. It was the visible corner of a regression
+introduced by the storage move, and it had been affecting the whole app.
+
+### What changed underneath
+
+Before v8.1 the app republished itself on every save, and `publishAll` wrote the
+whole state — log, weights, profile, theme — back into `#log-data`. So the block
+embedded in the page was **continuously refreshed**. Reading it first on load was
+correct, because it was never more than one save out of date.
+
+v8.1 added `if (storeRef.current) return true;` so a save no longer republishes.
+That was the point of the change and it is right. But the block stopped being
+refreshed at that moment and became a snapshot of whatever was true when the
+page was last shipped — while the load path went on reading it first, as though
+nothing had changed.
+
+Since then, every open rendered the log, the weights, the profile and the theme
+**as they stood at the last publish**, until the store answered a second later.
+Measured, with a store holding a session the page had never heard of:
+
+    the week counter showed  3 -> 4 of 6
+
+The theme was simply the most visible instance, because a whole-page colour
+change is impossible to miss where a stale set count is not.
+
+### The fix
+
+The first render now comes from the most current thing available, in order:
+
+1. **The device copy.** Written on the same debounce as everything else, so it
+   is up to the minute.
+2. **The store**, waited for — bounded — when the device has nothing. A spinner
+   for a moment is honest; a log that is days old and says nothing about being
+   provisional is not.
+3. **The block**, only when there is nothing else. That is a page with no store,
+   which is the case it was written for.
+
+The photo is the one exception, taken from the block even when something fresher
+exists: it changes about never, so a stale copy is the same copy, and it cannot
+mislead — it is either the right face or none.
+
+### The lesson worth keeping
+
+**A change that stops something being written must account for everything that
+reads it.** v8.1 was reviewed as "does the log still save" and it did. Nobody
+asked what else had depended on the publish as a side effect. The block had two
+jobs — a backup, and the source for the first render — and only the first was
+thought about.
+
+Two smaller versions of the same fault turned up alongside it:
+
+- The suites were pinned to version-numbered files, so `tdb` ran against the
+  v8.1 build for four versions. Its passes were real and about old code. Every
+  suite now reads one `current.html` that the build writes.
+- The `theme` in `live-*.json`, which seeds the embedded block, was hand-carried
+  between versions and drifted from the store. It is rebuilt from `read_db` now.
+
+## v9.6 — the theme lives in the page
+
+v9.0 concluded that in this frame there is nowhere durable to read a preference
+from before the first paint, and made System the default so that most opens need
+nothing remembered. That was right, and it was not enough: the lifter runs Dark,
+which is an override, and an override still has to come from somewhere.
+
+Four more versions guessed at where. What settled it was not a theory but a
+trace, read off his own phone through the boot report:
+
+```
+536ms  boot         {"stored":null,"cookie":null,"phone":"light","painted":"light"}
+965ms  device copy  {"present":false,"days":0,"theme":null}
+3244ms store read   {"ok":true,"days":3,"theme":"dark"}
+```
+
+Three facts, none of them arguable:
+
+- **localStorage does not survive the app being closed.** The report from the
+  session before showed the same key holding three days of training. Empty here,
+  full there — so it is the close that takes it, not a quota and not a bug in
+  what writes it.
+- **Cookies are blocked outright.** `cookie:null` on the line immediately after
+  a cookie was written. A cross-origin frame does not get to keep one, whatever
+  the write appears to do.
+- **The store answers at 3.2 seconds.** It holds the right answer. It is a
+  network call, and no amount of ordering makes it arrive before a paint.
+
+### Where a preference can actually live
+
+The page. It survives because it *is* the page: `<meta name="app-theme">`, baked
+at publish time from what the store holds, sitting ahead of the stylesheet where
+the boot script can read it synchronously. Nothing about the frame can take it
+away, because taking it away would mean not loading the app.
+
+The order, in the boot script and in the `useState` initialiser alike, is:
+
+1. **localStorage** — right whenever the app has not been closed since a change.
+2. **The page's bake** — right whenever the page has been published since one.
+3. **`prefers-color-scheme`** — a first open, or a build older than the bake.
+
+Those two places resolving by identical rules is the rule v9.0 already wrote
+down. It was broken once by teaching one of them about a new source and not the
+other, which produced a coin toss I nearly filed as a flaky test.
+
+### The cost, stated plainly
+
+A bake goes stale the moment the preference changes, and stays stale until the
+next publish. That costs **one step on the next open, and one only** — the store
+still wins, a frame late. `tappearance` pins exactly that, both halves: no
+repaint when the bake agrees, exactly one step when it does not.
+
+This is a real trade and worth naming: the app is choosing a one-frame step in a
+rare case over three seconds of the wrong colour in the common one.
+
+### The bug that fell out of writing the test
+
+`readAll` reports `empty` by counting **training days**, deliberately — a store
+holding only a preference is still a first run for the log. But the first-run
+branch pushed the page's state up wholesale and returned, so a store with a real
+preference and no sessions got that preference overwritten by a stale bake — and
+then displayed it for ever, because nothing on that path corrects the theme
+again. It now adopts what the store holds whenever this device has not chosen
+for itself.
+
+Nobody would have found that by reading the code. It surfaced because a fixture
+happened to describe a store with a preference and no sessions.
+
+### Two suites that had gone quietly wrong
+
+- `tcookie` asserted that a cookie carries the theme. That mechanism was removed
+  *because it was measured failing on the phone*, so the suite was asserting the
+  presence of something deliberately deleted. It now tests what actually carries
+  it: the store, and the page the store gets baked into.
+- `tdiscard` modelled "the boot guess" as the phone's setting. The bake is the
+  boot guess now. It reads that value **out of the build under test** rather
+  than having it written down, so it cannot drift the way the version-numbered
+  fixtures did.
+
+Both were fixture drift, not app faults — but a suite that describes a version
+of the app that no longer exists is worth no more than the assertions that
+cannot fail, and is harder to notice.
+
+## v9.7 — the app rebakes its own page
+
+v9.6 put the theme in the page and called the cost "one step, and only one".
+That was true of the *shape* of the step and false about how often it happens.
+Three consecutive opens, his state exactly:
+
+```
+open 1: page baked dark · frames dark -> light · settles light
+open 2: page baked dark · frames dark -> light · settles light
+open 3: page baked dark · frames dark -> light · settles light
+```
+
+The bake is only written when the page is published. The app deliberately never
+publishes — that is the guard on `publishAll`, and it is right. So a preference
+changed in the app disagrees with the page **for ever**, and the step repeats on
+every open until someone publishes by hand. The mistake was measuring one open
+and generalising from it: the same shape as an assertion that cannot fail,
+wearing different clothes.
+
+### The fix
+
+Changing the Appearance rewrites the page. `rebakeAppearance` publishes with the
+new theme baked in, so the next open — and every open after — paints once.
+
+This is the one deliberate exception to "a save must never republish", and it is
+worth being precise about why it is not that rule being loosened:
+
+- It is not a save. It is a change to **how the page itself is written**, which
+  is the only kind of change a republish exists to carry.
+- It fires from the Appearance screen, where nothing is being logged, so the
+  reload costs the position of a screen the lifter is about to leave anyway.
+- It is paid **once per change** instead of once per open, and he changes his
+  appearance far less often than he opens the app.
+
+`publishAll` keeps its guard untouched. The rebake is a separate function with
+its own, and refuses in three cases: before the store has answered (publishing
+writes `#log-data`, and a half-loaded state would bake a partial record into the
+page), with no publisher, and when the page already carries the value asked for.
+That last one matters — without it, tapping the option already in force would
+reload every open view to change nothing, which is exactly what the guard on
+`publishAll` exists to prevent.
+
+### And a shorter step for the cases it cannot cover
+
+The rebake can fail: out of signal, or a publish that conflicts. So the store
+read was split. `readTheme` fetches `meta/prefs` alone, ahead of the record —
+on his phone the full `readAll` took 3.2 seconds because it waits on every
+training day, the profile and a 36KB photo. The preference is one small
+document, and it is the only part anyone can *see* is wrong while they wait.
+
+Belt and braces, and they fail independently: the rebake makes the common case
+have no step at all, the early read makes every remaining case short.
+
+### What went wrong in the suites, again
+
+Three suites failed the moment the bake changed from dark to light — `tlive`,
+`tlearn`, `tcookie` — all seeding a dark store against a light-baked page. Not
+app faults: each was silently testing a **stale bake** under the name of
+something else.
+
+The lesson is now in `bake.mjs`: **which bake a scenario runs against is part of
+the scenario**, not a constant. It swaps the attribute in the bytes of the build
+under test rather than writing a page of its own, for the reason `tdb` ran
+against v8.1 for four versions — a fixture written by hand is a fixture that can
+stop describing the app without anyone noticing.
+
+`tlive` was also corrected to hold `light`, read back off the artifact rather
+than written from memory. Its whole job is to mirror the live store, and a
+mirror that has drifted is worse than no mirror.
+
+## v9.8 — and not under his finger
+
+The rebake worked and was in the wrong place. Publishing on the tap meant a
+reload about a second after choosing Light or Dark: a flicker on the very screen
+the lifter had opened to stop one.
+
+It now waits. `applyAppearance` marks the bake stale; the rewrite happens in the
+handler that already runs when the app is hidden, beside the flush that was
+always there. Same guarantee, and the reload lands on a view nobody is looking
+at — what he comes back to is a page already baked correctly.
+
+The load path marks it stale too, when the page carries an older answer than the
+one in force. Without that, a rebake missed because the app was force-quit or
+out of signal would wait for another tap to heal, which is a step on every open
+until he happens to change the setting again.
+
+`trebake` now pins both halves, and the first one fails on the shipped v9.7 for
+exactly the reported reason:
+
+```
+FAIL - nothing republishes under his finger   [publishes 1]
+PASS - the page is rewritten on the way out   [published]
+```
+
+### The publish conflict, which was the feature working
+
+Publishing v9.8 was refused: a newer version had been saved from inside the page
+at 21:46. That was his own app rebaking itself after he switched back to Dark —
+the v9.7 feature doing its job. His page held a fresher record than the fixture
+here: an email, a mobile and a 2 September weigh-in that `live-v83.json` never
+had.
+
+So the release was rebuilt on **his** published state rather than the local
+fixture, and the merge checked field by field before publishing:
+
+```
+kept  workout-logs   kept  bodyweight-logs   kept  profile   kept  theme
+photo identical: true
+```
+
+Worth writing down, because it is now a standing condition: **the page can be
+newer than anything here.** The app publishes on its own when the appearance
+changes, so a local fixture is a snapshot that goes stale the moment he taps.
+Always rebuild the release from the live page's block, never from the fixture,
+and never resend a document that a refusal has already told you is behind.
+
+## v9.9 — measuring the screen, not the decision
+
+He reported the step again with Light selected. The boot report came back with
+every source agreeing:
+
+```
+{"stored":"light","page":"light","phone":"light","painted":"light"}
+```
+
+And his Claude app is in light mode too — the guess that it was dark, which
+would have explained the asymmetry neatly, was simply wrong.
+
+So everything the app can see about itself is correct, and he is still seeing a
+dark frame. That is not a contradiction; it is a gap in the instrument. **The
+boot report records what the app decided, not what the screen showed.** Every
+round of this has been argued from the first and reported as the second.
+
+`__trace` now carries both. A `requestAnimationFrame` sampler in the boot script
+records the real computed ground and notes only the changes — the same
+instrument the suites use — plus `firstPaint` from the Paint Timing API, which
+says when this document put anything on screen at all. Two readings the app
+could not previously give:
+
+- **frames `light`, one entry** — the app never drew dark, so a step he saw was
+  painted by something that is not this document, and nothing inside it can
+  reach that.
+- **frames `dark -> light`** — it is ours after all, and the trace above it says
+  which source was wrong.
+
+The recorder was verified against both cases before shipping: a matching bake
+records one unbroken frame, a stale bake records the step.
+
+What it cannot do is observe a frame before it runs, and the host's runtime is
+parsed ahead of ours. If the answer turns out to be "before us", the honest
+reply is that it is not fixable from inside the page — which is worth being
+able to say with evidence rather than as a shrug.
+
+### Six suites that had quietly stopped asserting
+
+Rebuilding the release from his live page — the rule written down in v9.8 —
+broke `tlive`, `tstale`, `tdb`, `tsave` and `tprofile2`. All for the same
+reason, and it is worse than fixture drift: they were reading the **live
+record** through `current.html`, so they moved every time he trained. `tdb`
+counted three sessions and one weigh-in; he logged a fourth session and weighed
+in again, and the suite reported a migration bug that was really its own fixture
+walking.
+
+A suite that follows the data asserts nothing. `bake.mjs` gained `pageWith`, the
+block's counterpart to `pageFor`, and the counting suites now run against
+`fixture-3day.json` — a frozen log with the real profile and photo, which are
+what the page has to carry intact. `live-current.json` is the single live
+fixture, rebuilt from the published page, and it is used only where the point
+*is* to mirror him.
+
+This is the third form of the same fault: the version-pinned build (`tdb` on
+v8.1), the hand-written bake, and now the live block. In each, the suite stopped
+describing the thing it was named after and nobody noticed, because it was
+green.
+
+## v10.0 — the actual diagnosis, and why System is the answer
+
+Nine versions were shipped against this bug on theories. Three measurements
+ended it. They are recorded here in full because the lesson is not about themes.
+
+### 1. The flash is the page loading with the wrong theme baked in
+
+Screencast of his own published bytes — real pixels off the compositor, not
+computed styles — with the CPU throttled 6× so the gap matches his phone:
+
+```
+baked dark, prefers dark:   0ms LIGHT(255) -> 153ms DARK(15)
+baked light, prefers light: 0ms LIGHT(255) -> 1010ms LIGHT(239)   (invisible)
+```
+
+### 2. The pre-paint window is not ours
+
+Stripping the host runtime, stripping the app bundle, cutting the page down to
+the boot script, and declaring `color-scheme` both after *and before* the host's
+script: 125ms, 128ms, 90ms, 128ms. The window does not move. It is the browser's
+gap between navigation and first paint, and nothing inside the document can
+paint into it.
+
+### 3. The rebake never completes when the app is closed
+
+```
+backgrounded, publish quick : completed
+backgrounded, publish slow  : completed
+closed outright, quick      : STARTED BUT NEVER FINISHED
+closed outright, slow       : STARTED BUT NEVER FINISHED
+```
+
+That is the whole bug. The rebake fires on hide and is a network publish; iOS
+destroys the page on a real close and the publish dies with it. It landed only
+on the two occasions he backgrounded the app instead of closing it — which is
+exactly what made it look like it worked.
+
+So: choose a theme, close the app, iOS discards localStorage, the boot script
+falls back to the bake — still the *previous* choice — and paints the opposite.
+Both directions, every time. And when localStorage happened to survive, there
+was no flash at all, which is why it kept appearing fixed.
+
+### Why System, and why it is not a workaround
+
+An explicit override cannot be made flash-free here, and this is a proof rather
+than a preference:
+
+- the first frame must know the answer before any code runs;
+- the only thing that survives the app closing is the page itself;
+- the page can only be changed by a publish;
+- a publish can only complete while the app is open.
+
+System needs none of that. It reads `prefers-color-scheme`, which is always
+there. `tsystem.mjs` proves it on real pixels, on both phones, with and without
+a device copy — and pins the one remaining cost honestly: a page still baked
+with a concrete colour costs one step until it is republished, which is why the
+release itself is baked `system`.
+
+### The instrument that should have existed on day one
+
+Every tool in `dbg/` before this ran *inside* the page, so none could see a
+frame painted while the main thread was blocked — and the host's runtime is 13KB
+of blocking inline script ahead of anything of ours. `screencast.mjs` records
+from the browser process via CDP, and `png.mjs` decodes the frames (there is no
+image library here; zlib and the PNG spec are enough).
+
+The lesson is the one this file keeps relearning in new clothes: **the boot
+report says what the app decided; the lifter reports what the screen showed.**
+Nine versions were spent arguing from the first about complaints made in the
+second. When a measurement and a user disagree, the measurement is answering a
+different question.
+
+### The white window, and the fix that was tried and rejected
+
+With v10.0 the reported symptom changed from "the wrong colour" to "a flash of
+white, then the right colour" — which is the pre-paint window, now visible only
+when the chosen theme disagrees with the surroundings.
+
+The obvious lever is to carry the ground on the `<html>` element, which the
+parser reaches before the host injects its runtime into `<head>`. Measured in a
+light parent frame, our page inside an iframe, CPU throttled 6×:
+
+```
+dark, as shipped        : white until 448ms
+dark, ground on <html>  : white until 265ms
+```
+
+Promising — and wrong. Adding the host's blocking runtime, where it really sits:
+
+```
+dark, as shipped        : white until 510ms
+dark, ground on <html>  : white until 513ms
+system, either shape    : no dark frame at all
+```
+
+The gain disappears entirely. The browser does not paint the document until the
+blocking script in its head has finished, so no markup of ours — however early
+— can paint into that window. **It is the host's execution time, not ours, and
+it is not reachable from inside the page.** Nothing was shipped for it.
+
+The floor, for the record: an iframe carrying nothing but a dark ground paints
+at 123ms; our 290KB page at 253ms with no host runtime; 510ms with it.
+
+So the complete and final position on appearance:
+
+- **System, phone light** — no flash. **System, phone dark** — no flash. The
+  surroundings follow the phone and so do we, so nothing disagrees.
+- **An explicit Light or Dark that disagrees with the phone** — a pre-paint
+  window of the surrounding colour, roughly half a second on his device, which
+  no change to this page can remove.
+
+Wanting a dark log without the flash means setting the phone to dark and
+leaving Appearance on System. That is not a workaround dressed up as a feature:
+it is the only arrangement in which the frame before ours is already the right
+colour.

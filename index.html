@@ -6,6 +6,129 @@
     <meta name="theme-color" content="#0b0e14" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Training Log</title>
+    <!-- Runs before anything paints, and before React exists.
+
+         The palette in index.css is dark by default; light is the override
+         that data-app-theme switches on. So a document with no attribute yet
+         is a dark document. React sets that attribute from an effect, which
+         runs after the first paint — which meant a lifter who had chosen day
+         got a frame of night on every single open.
+
+         sync.js and the artifact build both copy this element through by its
+         id, so there is one copy of it and it cannot drift. -->
+    <script id="theme-boot">
+      // A record of what actually happened, for the diagnostics panel. Tapping
+      // the version number in the header shows it. Reading a flash off a
+      // recording is guesswork; this is the app saying what it did.
+      window.__trace = [];
+      window.__note = function (step, detail) {
+        try {
+          window.__trace.push({ at: Math.round(performance.now()), step: step, detail: detail });
+        } catch (e) {}
+      };
+      // Where the theme can be read before anything paints.
+      //
+      // Storage was tried and does not survive the app being closed on iOS: one
+      // boot report showed three days of training in it, the next showed it
+      // empty. Cookies were tried and are blocked outright in a cross-origin
+      // frame — the report showed one written and unreadable on the very next
+      // line. What is left is the page itself, which survives because it IS the
+      // page, and is a better guess than the phone's setting for anyone whose
+      // choice differs from it.
+      window.__pageTheme = function () {
+        try {
+          var m = document.querySelector('meta[name="app-theme"]');
+          return m ? m.getAttribute('content') : null;
+        } catch (e) {
+          return null;
+        }
+      };
+      try {
+        var d = document.documentElement;
+        var stored = null;
+        try {
+          stored = JSON.parse(localStorage.getItem('theme'));
+        } catch (e) {
+          stored = null;
+        }
+        var page = window.__pageTheme();
+        var t = stored;
+        if (t !== 'dark' && t !== 'light' && t !== 'system') t = page;
+        // 'system' means "follow the phone", so it resolves here rather than
+        // being painted. This is also the last fallback: nothing was stored,
+        // and the page carries no bake either — a first open, or a build that
+        // predates the bake. The phone's own setting is the best guess left.
+        if (t !== 'dark' && t !== 'light') {
+          t =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        }
+        d.dataset.appTheme = t;
+        d.style.colorScheme = t;
+        // Paint the ground here, not only the attribute. The attribute decides
+        // nothing until our own stylesheet parses, and until then the host's
+        // reset is in force — body{background:#faf9f5}, which is light. That
+        // gap is 26KB of CSS wide and it is the light frame being reported.
+        // An inline style beats the host's rule and needs no stylesheet at all.
+        var ground = t === 'dark' ? '#0b0e14' : '#f2f4f8';
+        d.style.backgroundColor = ground;
+        if (document.body) document.body.style.backgroundColor = ground;
+        window.__note('boot', {
+          stored: stored,
+          page: page,
+          phone: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+          painted: t,
+          hidden: document.visibilityState === 'hidden',
+        });
+        // What the screen ACTUALLY showed, as against what this script decided.
+        // Every report so far has said the app chose correctly, and the lifter
+        // has kept seeing a dark frame anyway — so the two must be measured
+        // separately. This samples the real computed ground every frame and
+        // records only the changes, which is the same instrument the suites use
+        // and the only one that can tell "the app painted dark" apart from
+        // "something that is not the app was on screen first".
+        //
+        // Nothing here can observe a frame before this script runs. If it
+        // reports one unbroken colour and he still saw a step, the step was
+        // painted outside this document, and no change inside it can reach.
+        (function () {
+          var seen = [];
+          var stop = 0;
+          var sample = function () {
+            try {
+              var el = document.body || document.documentElement;
+              var m = window.getComputedStyle(el).backgroundColor.match(/\d+/);
+              var shade = m ? (Number(m[0]) < 128 ? 'dark' : 'light') : null;
+              if (shade && shade !== seen[seen.length - 1]) {
+                seen.push(shade);
+                window.__note('screen', { showing: shade, after: seen.length - 1 + ' change(s)' });
+              }
+            } catch (e) {}
+            if (++stop < 240) requestAnimationFrame(sample);
+            else
+              window.__note('screen settled', {
+                frames: seen.join(' -> '),
+                // When this document first put anything on screen at all.
+                // Anything before it belongs to whatever was showing instead.
+                firstPaint: (function () {
+                  try {
+                    var e = performance.getEntriesByType('paint');
+                    return e.length ? Math.round(e[0].startTime) + 'ms' : 'not reported';
+                  } catch (err) {
+                    return 'unavailable';
+                  }
+                })(),
+              });
+          };
+          requestAnimationFrame(sample);
+        })();
+      } catch (e) {
+        window.__note('boot failed', { error: String(e) });
+        document.documentElement.dataset.appTheme = 'light';
+        document.documentElement.style.colorScheme = 'light';
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
