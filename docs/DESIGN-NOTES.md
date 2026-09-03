@@ -1072,3 +1072,47 @@ report says what the app decided; the lifter reports what the screen showed.**
 Nine versions were spent arguing from the first about complaints made in the
 second. When a measurement and a user disagree, the measurement is answering a
 different question.
+
+### The white window, and the fix that was tried and rejected
+
+With v10.0 the reported symptom changed from "the wrong colour" to "a flash of
+white, then the right colour" — which is the pre-paint window, now visible only
+when the chosen theme disagrees with the surroundings.
+
+The obvious lever is to carry the ground on the `<html>` element, which the
+parser reaches before the host injects its runtime into `<head>`. Measured in a
+light parent frame, our page inside an iframe, CPU throttled 6×:
+
+```
+dark, as shipped        : white until 448ms
+dark, ground on <html>  : white until 265ms
+```
+
+Promising — and wrong. Adding the host's blocking runtime, where it really sits:
+
+```
+dark, as shipped        : white until 510ms
+dark, ground on <html>  : white until 513ms
+system, either shape    : no dark frame at all
+```
+
+The gain disappears entirely. The browser does not paint the document until the
+blocking script in its head has finished, so no markup of ours — however early
+— can paint into that window. **It is the host's execution time, not ours, and
+it is not reachable from inside the page.** Nothing was shipped for it.
+
+The floor, for the record: an iframe carrying nothing but a dark ground paints
+at 123ms; our 290KB page at 253ms with no host runtime; 510ms with it.
+
+So the complete and final position on appearance:
+
+- **System, phone light** — no flash. **System, phone dark** — no flash. The
+  surroundings follow the phone and so do we, so nothing disagrees.
+- **An explicit Light or Dark that disagrees with the phone** — a pre-paint
+  window of the surrounding colour, roughly half a second on his device, which
+  no change to this page can remove.
+
+Wanting a dark log without the flash means setting the phone to dark and
+leaving Appearance on System. That is not a workaround dressed up as a feature:
+it is the only arrangement in which the frame before ours is already the right
+colour.
