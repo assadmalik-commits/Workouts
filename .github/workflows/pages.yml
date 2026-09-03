@@ -31,7 +31,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Playwright is a devDependency for the test suite, and npm ci installs
+      # devDependencies because the build needs Vite. Its postinstall would
+      # otherwise download three browsers to build a static site.
       - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       # Never pipe a build anywhere: a pipeline exits with the status of its
       # last command, so a broken build would report success and publish a
       # stale bundle.
