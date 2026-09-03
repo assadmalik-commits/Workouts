@@ -1000,3 +1000,75 @@ This is the third form of the same fault: the version-pinned build (`tdb` on
 v8.1), the hand-written bake, and now the live block. In each, the suite stopped
 describing the thing it was named after and nobody noticed, because it was
 green.
+
+## v10.0 — the actual diagnosis, and why System is the answer
+
+Nine versions were shipped against this bug on theories. Three measurements
+ended it. They are recorded here in full because the lesson is not about themes.
+
+### 1. The flash is the page loading with the wrong theme baked in
+
+Screencast of his own published bytes — real pixels off the compositor, not
+computed styles — with the CPU throttled 6× so the gap matches his phone:
+
+```
+baked dark, prefers dark:   0ms LIGHT(255) -> 153ms DARK(15)
+baked light, prefers light: 0ms LIGHT(255) -> 1010ms LIGHT(239)   (invisible)
+```
+
+### 2. The pre-paint window is not ours
+
+Stripping the host runtime, stripping the app bundle, cutting the page down to
+the boot script, and declaring `color-scheme` both after *and before* the host's
+script: 125ms, 128ms, 90ms, 128ms. The window does not move. It is the browser's
+gap between navigation and first paint, and nothing inside the document can
+paint into it.
+
+### 3. The rebake never completes when the app is closed
+
+```
+backgrounded, publish quick : completed
+backgrounded, publish slow  : completed
+closed outright, quick      : STARTED BUT NEVER FINISHED
+closed outright, slow       : STARTED BUT NEVER FINISHED
+```
+
+That is the whole bug. The rebake fires on hide and is a network publish; iOS
+destroys the page on a real close and the publish dies with it. It landed only
+on the two occasions he backgrounded the app instead of closing it — which is
+exactly what made it look like it worked.
+
+So: choose a theme, close the app, iOS discards localStorage, the boot script
+falls back to the bake — still the *previous* choice — and paints the opposite.
+Both directions, every time. And when localStorage happened to survive, there
+was no flash at all, which is why it kept appearing fixed.
+
+### Why System, and why it is not a workaround
+
+An explicit override cannot be made flash-free here, and this is a proof rather
+than a preference:
+
+- the first frame must know the answer before any code runs;
+- the only thing that survives the app closing is the page itself;
+- the page can only be changed by a publish;
+- a publish can only complete while the app is open.
+
+System needs none of that. It reads `prefers-color-scheme`, which is always
+there. `tsystem.mjs` proves it on real pixels, on both phones, with and without
+a device copy — and pins the one remaining cost honestly: a page still baked
+with a concrete colour costs one step until it is republished, which is why the
+release itself is baked `system`.
+
+### The instrument that should have existed on day one
+
+Every tool in `dbg/` before this ran *inside* the page, so none could see a
+frame painted while the main thread was blocked — and the host's runtime is 13KB
+of blocking inline script ahead of anything of ours. `screencast.mjs` records
+from the browser process via CDP, and `png.mjs` decodes the frames (there is no
+image library here; zlib and the PNG spec are enough).
+
+The lesson is the one this file keeps relearning in new clothes: **the boot
+report says what the app decided; the lifter reports what the screen showed.**
+Nine versions were spent arguing from the first about complaints made in the
+second. When a measurement and a user disagree, the measurement is answering a
+different question.

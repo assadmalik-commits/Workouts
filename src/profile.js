@@ -292,7 +292,12 @@ export const APPEARANCE = {
   label: 'Appearance',
   kind: 'choice',
   options: ['System', 'Light', 'Dark'],
-  hint: 'System follows your phone. Choosing Light or Dark overrides it for this app.',
+  // Why System is not merely the default but the only one that cannot flash:
+  // the first frame has to know the answer before any code runs, and the only
+  // thing that survives the app closing is the page itself, which can only be
+  // rewritten by a publish — and a publish is killed when the app is closed.
+  // System needs none of that. It reads the phone, which is always there.
+  hint: 'System follows your phone and is always right on the first frame. Light and Dark override it, and can show a brief flash of the old colour when the app is reopened.',
 };
 
 export const THEME_PREFS = ['system', 'light', 'dark'];
