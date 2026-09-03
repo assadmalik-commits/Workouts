@@ -79,7 +79,50 @@
           page: page,
           phone: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
           painted: t,
+          hidden: document.visibilityState === 'hidden',
         });
+        // What the screen ACTUALLY showed, as against what this script decided.
+        // Every report so far has said the app chose correctly, and the lifter
+        // has kept seeing a dark frame anyway — so the two must be measured
+        // separately. This samples the real computed ground every frame and
+        // records only the changes, which is the same instrument the suites use
+        // and the only one that can tell "the app painted dark" apart from
+        // "something that is not the app was on screen first".
+        //
+        // Nothing here can observe a frame before this script runs. If it
+        // reports one unbroken colour and he still saw a step, the step was
+        // painted outside this document, and no change inside it can reach.
+        (function () {
+          var seen = [];
+          var stop = 0;
+          var sample = function () {
+            try {
+              var el = document.body || document.documentElement;
+              var m = window.getComputedStyle(el).backgroundColor.match(/\d+/);
+              var shade = m ? (Number(m[0]) < 128 ? 'dark' : 'light') : null;
+              if (shade && shade !== seen[seen.length - 1]) {
+                seen.push(shade);
+                window.__note('screen', { showing: shade, after: seen.length - 1 + ' change(s)' });
+              }
+            } catch (e) {}
+            if (++stop < 240) requestAnimationFrame(sample);
+            else
+              window.__note('screen settled', {
+                frames: seen.join(' -> '),
+                // When this document first put anything on screen at all.
+                // Anything before it belongs to whatever was showing instead.
+                firstPaint: (function () {
+                  try {
+                    var e = performance.getEntriesByType('paint');
+                    return e.length ? Math.round(e[0].startTime) + 'ms' : 'not reported';
+                  } catch (err) {
+                    return 'unavailable';
+                  }
+                })(),
+              });
+          };
+          requestAnimationFrame(sample);
+        })();
       } catch (e) {
         window.__note('boot failed', { error: String(e) });
         document.documentElement.dataset.appTheme = 'light';

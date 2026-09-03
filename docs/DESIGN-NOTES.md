@@ -941,3 +941,62 @@ newer than anything here.** The app publishes on its own when the appearance
 changes, so a local fixture is a snapshot that goes stale the moment he taps.
 Always rebuild the release from the live page's block, never from the fixture,
 and never resend a document that a refusal has already told you is behind.
+
+## v9.9 — measuring the screen, not the decision
+
+He reported the step again with Light selected. The boot report came back with
+every source agreeing:
+
+```
+{"stored":"light","page":"light","phone":"light","painted":"light"}
+```
+
+And his Claude app is in light mode too — the guess that it was dark, which
+would have explained the asymmetry neatly, was simply wrong.
+
+So everything the app can see about itself is correct, and he is still seeing a
+dark frame. That is not a contradiction; it is a gap in the instrument. **The
+boot report records what the app decided, not what the screen showed.** Every
+round of this has been argued from the first and reported as the second.
+
+`__trace` now carries both. A `requestAnimationFrame` sampler in the boot script
+records the real computed ground and notes only the changes — the same
+instrument the suites use — plus `firstPaint` from the Paint Timing API, which
+says when this document put anything on screen at all. Two readings the app
+could not previously give:
+
+- **frames `light`, one entry** — the app never drew dark, so a step he saw was
+  painted by something that is not this document, and nothing inside it can
+  reach that.
+- **frames `dark -> light`** — it is ours after all, and the trace above it says
+  which source was wrong.
+
+The recorder was verified against both cases before shipping: a matching bake
+records one unbroken frame, a stale bake records the step.
+
+What it cannot do is observe a frame before it runs, and the host's runtime is
+parsed ahead of ours. If the answer turns out to be "before us", the honest
+reply is that it is not fixable from inside the page — which is worth being
+able to say with evidence rather than as a shrug.
+
+### Six suites that had quietly stopped asserting
+
+Rebuilding the release from his live page — the rule written down in v9.8 —
+broke `tlive`, `tstale`, `tdb`, `tsave` and `tprofile2`. All for the same
+reason, and it is worse than fixture drift: they were reading the **live
+record** through `current.html`, so they moved every time he trained. `tdb`
+counted three sessions and one weigh-in; he logged a fourth session and weighed
+in again, and the suite reported a migration bug that was really its own fixture
+walking.
+
+A suite that follows the data asserts nothing. `bake.mjs` gained `pageWith`, the
+block's counterpart to `pageFor`, and the counting suites now run against
+`fixture-3day.json` — a frozen log with the real profile and photo, which are
+what the page has to carry intact. `live-current.json` is the single live
+fixture, rebuilt from the published page, and it is used only where the point
+*is* to mirror him.
+
+This is the third form of the same fault: the version-pinned build (`tdb` on
+v8.1), the hand-written bake, and now the live block. In each, the suite stopped
+describing the thing it was named after and nobody noticed, because it was
+green.
