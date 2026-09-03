@@ -24,7 +24,9 @@ const store = {
   // System, which he chose after two days of the flash — and which is the one
   // setting whose first frame needs nothing to have survived the app closing.
   'meta/prefs':   { theme: 'system', updatedAt: '2026-09-03T09:00:00.000Z' },
-  'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173',
+  // From the private fixture: this suite exists to mirror his real store, and
+  // a fictitious lifter here would mean it mirrors nothing.
+  'meta/profile': { name: emb.profile.name, dob: emb.profile.dob, sex: emb.profile.sex, heightCm: emb.profile.heightCm,
                     // From the private fixture, never written down here: this
                     // file is committed and his email and number are not.
                     email: emb.profile.email, mobile: emb.profile.mobile, updatedAt:'x' },

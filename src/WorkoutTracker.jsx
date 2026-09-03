@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Dumbbell, Check, ChevronDown, ChevronUp, Loader2, Moon, Sun, Plus, Trash2, CalendarX,
-  Home, Flame, Activity, User, Camera, Download, ChevronRight, ChevronLeft, X, Lock,
+  Home, Flame, Activity, User, Camera, Download, Upload, ChevronRight, ChevronLeft, X, Lock,
 } from 'lucide-react';
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '11.0';
+const APP_VERSION = '12.0';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -537,6 +537,7 @@ export default function WorkoutTracker() {
   // When the record was last written out to a file the lifter actually holds.
   // Null means never, which is the same prompt as long ago.
   const [lastExportAt, setLastExportAt] = useState(null);
+  const [importState, setImportState] = useState(null);
   const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
@@ -1500,6 +1501,76 @@ export default function WorkoutTracker() {
     if (res.code !== 'declined') {
       setExportState('failed');
       setTimeout(() => setExportState(null), 3000);
+    }
+  };
+
+  // Reading a log back in. This is how the record moves between the artifact
+  // and the standalone app, and how a phone that has lost its storage gets its
+  // training back — until there is a backend, it is the only way in.
+  //
+  // Merged, never replaced. A file is a copy from some earlier moment, and
+  // this device may hold sessions the file predates: taking the file wholesale
+  // would delete them. Day by day, the one with more filled sets wins, which
+  // is right whichever direction the gap runs.
+  const importLog = async (file) => {
+    if (!file) return;
+    setImportState(null);
+    try {
+      const text = await file.text();
+      const incoming = JSON.parse(text);
+      const theirLogs = migrate(incoming?.['workout-logs'] || {}).logs;
+      if (!theirLogs || typeof theirLogs !== 'object') throw new Error('no log in that file');
+
+      const mine = persistable(logsRef.current);
+      const filledCount = (slots) =>
+        Object.values(slots || {}).reduce(
+          (n, entries) =>
+            n +
+            Object.values(entries || {}).reduce(
+              (m, ex) => m + setsOf(ex).filter(setFilled).length,
+              0
+            ),
+          0
+        );
+      const merged = { ...mine };
+      let added = 0;
+      let sets = 0;
+      for (const [date, slots] of Object.entries(theirLogs)) {
+        if (filledCount(slots) > filledCount(mine[date])) {
+          merged[date] = slots;
+          if (!mine[date]) added += 1;
+          sets += filledCount(slots) - filledCount(mine[date]);
+        }
+      }
+      setLogs(merged);
+
+      // Weigh-ins are a list, not a day: merge by date and keep the newest.
+      const byDate = new Map((weightHistory || []).map((e) => [e.date, e]));
+      for (const e of incoming?.['bodyweight-logs'] || []) if (e?.date) byDate.set(e.date, e);
+      const weights = [...byDate.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+      setBwLogs(weights);
+
+      // The profile only fills gaps. Overwriting what is on this device with
+      // an older file is how a corrected height silently reverts.
+      const theirProfile = normaliseProfile(incoming?.profile || {});
+      const nextProfile = { ...theirProfile, ...Object.fromEntries(
+        Object.entries(profileRef.current || {}).filter(([, v]) => v !== '' && v != null)
+      ) };
+      setProfile(nextProfile);
+
+      const record = persistable(merged);
+      save('workout-logs', record);
+      save('bodyweight-logs', weights);
+      save('profile', nextProfile);
+      await flushKeys(
+        [...Object.keys(merged).map((d) => KEY.session(d)), KEY.bodyweight, KEY.profile, KEY.photo],
+        stateOf(record, weights, nextProfile)
+      );
+      setImportState({ ok: true, days: added, sets });
+      setTimeout(() => setImportState(null), 4000);
+    } catch (e) {
+      setImportState({ ok: false, why: String(e?.message || e) });
+      setTimeout(() => setImportState(null), 5000);
     }
   };
 
@@ -2942,6 +3013,35 @@ export default function WorkoutTracker() {
           )}
           {exportState === 'failed' && (
             <p className="text-xs text-dim text-center">That file could not be saved.</p>
+          )}
+
+          {/* And back in again. The pair is what makes the record portable
+              between the artifact and the standalone app, and what gets a
+              phone its training back after storage is lost. */}
+          <label
+            aria-label="Import log"
+            className="w-full bg-raised border border-line rounded-xl py-3 text-sm font-bold text-dim flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Upload size={16} /> Import a log file
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                importLog(e.target.files && e.target.files[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          {importState && (
+            <p className="text-xs text-dim text-center px-2" aria-label="Import result">
+              {importState.ok
+                ? importState.sets
+                  ? `Added ${importState.sets} set${importState.sets === 1 ? '' : 's'}` +
+                    (importState.days ? ` across ${importState.days} new day${importState.days === 1 ? '' : 's'}.` : '.')
+                  : 'That file held nothing this device did not already have.'
+                : `That file could not be read: ${importState.why}`}
+            </p>
           )}
         </div>
       )}

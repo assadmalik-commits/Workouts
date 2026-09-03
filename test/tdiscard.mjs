@@ -43,7 +43,7 @@ const run = async (label, storeTheme, systemTheme = 'light') => {
   });
   await page.addInitScript(stub(), [false, {
     'sessions/2026-08-30': { date:'2026-08-30', slots:{ 'Push-A': { 'Incline Dumbbell Press': { sets:[{w:'10',r:'10'}] } } }, updatedAt:'x' },
-    'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' },
+    'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' },
     'meta/prefs': { theme: storeTheme, updatedAt:'x' },
   }, false]);
   await page.goto(process.env.TDISCARD_URL || pageFor(bakeFor(storeTheme), 'discard'), { waitUntil:'commit' });

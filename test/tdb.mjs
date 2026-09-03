@@ -133,7 +133,7 @@ const today = '2026-09-02';
 {
   const seed = {
     'sessions/2026-08-30': { date: '2026-08-30', slots: { 'Push-A': { 'Incline Dumbbell Press': { sets: [{ w: '99', r: '3' }] } } }, updatedAt: '2026-08-30T10:00:00Z' },
-    'meta/profile': { name: 'From The Store', dob: '1979-10-15', sex: 'Male', heightCm: '173', updatedAt: '2026-09-01T10:00:00Z' },
+    'meta/profile': { name: 'From The Store', dob: '1986-04-22', sex: 'Male', heightCm: '173', updatedAt: '2026-09-01T10:00:00Z' },
     'meta/bodyweight': { entries: [{ date: '2026-09-01', weight: '71' }], updatedAt: '2026-09-01T10:00:00Z' },
   };
   const { browser, page, errors } = await open({ seedDocs: seed });
@@ -189,7 +189,7 @@ const today = '2026-09-02';
   // back in signal, against a store holding an older copy of that same day
   const older = {
     [`sessions/${today}`]: { date: today, slots: { 'Push-B': { 'Incline Dumbbell Press': { sets: [{ w: '1', r: '1' }] } } }, updatedAt: '2026-09-02T05:00:00Z' },
-    'meta/profile': { name: 'Assad Malik', dob: '1979-10-15', sex: 'Male', heightCm: '173', updatedAt: '2026-09-01T10:00:00Z' },
+    'meta/profile': { name: 'Sample Lifter', dob: '1986-04-22', sex: 'Male', heightCm: '173', updatedAt: '2026-09-01T10:00:00Z' },
   };
   const back = await open({ seedDocs: older, keepStorage: kept.logs ? { 'workout-logs': kept.logs, 'db-pending': kept.pending, profile: kept.profile } : null });
   const body = await back.page.innerText('body');

@@ -1207,3 +1207,76 @@ at the call site.
 The export also now carries the theme *preference* rather than the colour it
 resolves to: 'system' restored onto a phone set the other way must still mean
 "follow the phone".
+
+## v12.0 — a PWA alongside the artifact, and a way in
+
+The decision: **PWA now, a real backend later.** So the standalone app is built
+and hosted, and until the backend exists the record on it lives on the phone —
+with Export and Import as the way across, and the v11.0 nudge as the safety net
+that makes that arrangement honest rather than merely convenient.
+
+The artifact is not replaced. It keeps its store, which is the more durable of
+the two, and stays the record until there is something better than a device to
+put it on.
+
+### The repository is public, and that changed one thing already shipped
+
+Checked before hosting anything, and it should have been checked before the
+harness was committed: `"visibility": "public"`. The fixture committed that
+morning carried the lifter's name, date of birth, sex, height and a weigh-in —
+kept deliberately, on the reasoning that BMI and age are computed from them.
+That reasoning does not survive the repository being public.
+
+The name and date of birth are now a fictitious lifter across the whole test
+tree — they were hardcoded in twelve suites, not just the fixture. Height and
+weight stay: they drive the BMI assertions, and a height without a person
+attached is not personal data. Two derived assertions moved with them (the
+displayed age, and the header initials). `live-current.json` was already
+gitignored and still is.
+
+### What a PWA needed that the app did not have
+
+- **A manifest and real PNG icons.** Drawn at build time from the same barbell
+  mark as the favicon: iOS wants a 180px apple-touch-icon and will not take an
+  SVG for the home screen.
+- **Relative asset paths.** Pages serves from `/Workouts/`, not the domain
+  root, so `base: './'`. An absolute `/assets/...` works in every local test and
+  404s the moment it is deployed, which is the worst shape a bug can have.
+- **`theme-color` per scheme** rather than pinned dark, or the status bar
+  disagrees with the app in light mode.
+- **Durable storage, asked for.** `navigator.storage.persist()`, because until
+  the backend lands what is on the phone *is* the record and Safari evicts
+  ordinary site data for sites left unused. Best-effort: granted on installed
+  apps, often declined in a tab, and nothing useful to say to the lifter either
+  way.
+
+### The service worker bug the suite caught
+
+The first worker cached the page shell and nothing else. The JS and CSS are
+requested *before* the worker is controlling anything, so they never pass
+through its fetch handler and are never stored — and the app opened offline to
+a blank page, which is worse than not opening.
+
+The build now writes the content-hashed asset list into the worker, and each
+entry is cached individually rather than with `addAll`: one 404 in that list
+would reject the whole install and leave the app with no offline copy at all,
+silently.
+
+`tpwa.mjs` serves `dist` under `/Workouts/` — the subdirectory is part of the
+test, not an afterthought — checks the manifest parses and every icon loads,
+then kills the server and asserts the app still opens.
+
+### Import, and why it merges
+
+Export existed; there was no way back in. Import is how the record moves between
+the artifact and the standalone app, and the only way a phone that has lost its
+storage gets its training back.
+
+It **merges, never replaces**. A file is a copy from some earlier moment, and
+the device may hold sessions the file predates — importing wholesale would
+delete training that exists nowhere else. Day by day, the side with more filled
+sets wins; weigh-ins merge by date; the profile only fills gaps, because
+overwriting a corrected height with an older file is how a fix silently reverts.
+
+`timport.mjs`'s central case is a device holding a session trained *after* the
+backup was taken. That one has to keep the session and say it added nothing.

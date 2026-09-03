@@ -17,7 +17,7 @@ const URL = pageWith({
   'bodyweight-logs': [{ date: '2026-09-01', weight: '69' }],
   // A photo of realistic size and format, from the committed fixture. The
   // lifter's own is deliberately not in this repository.
-  profile: { name: 'Assad Malik', dob: '1979-10-15', sex: 'Male', heightCm: '173',
+  profile: { name: 'Sample Lifter', dob: '1986-04-22', sex: 'Male', heightCm: '173',
              photo: JSON.parse(fs.readFileSync(FIXTURES + '/three-day.json', 'utf8')).profile.photo },
   theme: 'light',
 }, 'profile2');
@@ -50,9 +50,9 @@ const rows = (page) => page.$$eval('[aria-label^="Edit "]', (bs) =>
   const r = await rows(page);
   ok('P five identity rows', r.length === 5, JSON.stringify(r));
   ok('P rows are the identity fields', /Name/.test(r[0]) && /Email/.test(r[1]) && /Mobile/.test(r[2]) && /Date of birth/.test(r[3]) && /Gender/.test(r[4]), JSON.stringify(r));
-  ok('P name shows its value', /Assad Malik/.test(r[0]), r[0]);
+  ok('P name shows its value', /Sample Lifter/.test(r[0]), r[0]);
   ok('P empty fields read Not set', /Not set/.test(r[1]) && /Not set/.test(r[2]), r[1]+' // '+r[2]);
-  ok('P date of birth shows the age', /46/.test(r[3]), r[3]);
+  ok('P date of birth shows the age', /40/.test(r[3]), r[3]);
   const body = await page.innerText('body');
   ok('P appearance is offered, apart from identity', /Appearance/.test(body));
   ok('P no weight field on profile', !/Weight/i.test(body), body.replace(/\n/g,' | ').slice(0,200));
@@ -74,7 +74,7 @@ const rows = (page) => page.$$eval('[aria-label^="Edit "]', (bs) =>
   ok('E Save is present', !!saveBtn);
   ok('E Save is locked before any change', !(await saveBtn.isEnabled()));
   ok('E the bottom bar is gone while editing', (await page.$$('.app-nav')).length === 0);
-  ok('E the field is prefilled', await page.inputValue('#field-input') === 'Assad Malik');
+  ok('E the field is prefilled', await page.inputValue('#field-input') === 'Sample Lifter');
   ok('E no tick before a change', (await page.$$('[aria-label="Ready to save"]')).length === 0);
   await page.fill('#field-input', 'Assad M');
   await page.waitForTimeout(200);
@@ -89,16 +89,16 @@ const rows = (page) => page.$$eval('[aria-label^="Edit "]', (bs) =>
   await page.waitForTimeout(200);
   await page.click('[aria-label="Back"]');
   await page.waitForTimeout(400);
-  ok('E back discards the edit', /Assad Malik/.test((await rows(page))[0]), (await rows(page))[0]);
+  ok('E back discards the edit', /Sample Lifter/.test((await rows(page))[0]), (await rows(page))[0]);
   ok('E and the bar comes back', (await page.$$('.app-nav')).length === 1);
   ok('E the capsule is measured again', (await page.$$('.app-capsule')).length === 1);
   // return key commits
   await page.click('[aria-label="Edit Name"]');
   await page.waitForTimeout(300);
-  await page.fill('#field-input', 'Assad Malik Jr');
+  await page.fill('#field-input', 'Sample Lifter Jr');
   await page.press('#field-input', 'Enter');
   await page.waitForTimeout(400);
-  ok('E return commits and returns', /Assad Malik Jr/.test((await rows(page))[0]), (await rows(page))[0]);
+  ok('E return commits and returns', /Sample Lifter Jr/.test((await rows(page))[0]), (await rows(page))[0]);
   ok('E no page errors', errors.length===0, errors.join(';'));
   await b.close();
 }

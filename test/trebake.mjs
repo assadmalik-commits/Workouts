@@ -16,7 +16,7 @@ fs.writeFileSync(path.join(art, 'reb-start.html'), bakeDark);
 
 const docs = () => ({
   'meta/prefs': { theme:'dark', updatedAt:'2026-09-02T08:00:00.000Z' },
-  'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' },
+  'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' },
   'sessions/2026-09-01': { date:'2026-09-01', slots:{ 'Legs-A': { 'Back Squat': { sets:[{w:'60',r:'8'}] } } }, updatedAt:'x' },
 });
 

@@ -27,7 +27,7 @@ const open = async ({ lastExportAt = null, decline = false } = {}) => {
   if (decline) await page.addInitScript(() => { window.__declineDownload = true; });
   await page.addInitScript(stub(), [false, {
     'meta/prefs': { theme: 'system', ...(lastExportAt ? { lastExportAt } : {}), updatedAt: 'x' },
-    'meta/profile': { name: 'Assad Malik', dob: '1979-10-15', sex: 'Male', heightCm: '173', updatedAt: 'x' },
+    'meta/profile': { name: 'Sample Lifter', dob: '1986-04-22', sex: 'Male', heightCm: '173', updatedAt: 'x' },
     'sessions/2026-09-01': { date: '2026-09-01', slots: { 'Legs-A': { 'back-squat': { sets: [{ w: '60', r: '8' }] } } }, updatedAt: 'x' },
   }, false]);
   await page.goto(pageWith(src, 'nudge'), { waitUntil: 'networkidle' });

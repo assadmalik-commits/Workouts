@@ -7,7 +7,7 @@ const URL = process.env.TTHEME_URL || 'http://127.0.0.1:4320/current.html';
 const checks = []; const ok = (n,c,e='') => checks.push([c?'PASS':'FAIL',n,e]);
 const seed = {
   'sessions/2026-08-30': { date:'2026-08-30', slots:{ 'Push-A': { 'Incline Dumbbell Press': { sets:[{w:'10',r:'10'}] } } }, updatedAt:'x' },
-  'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' },
+  'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' },
   'meta/prefs': { theme:'light', updatedAt:'x' },
 };
 async function open(pre) {
