@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+import { stub } from './dbstub.mjs';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+const ctx = await b.newContext({ timezoneId:'Asia/Dubai', locale:'en-GB', viewport:{width:440,height:820}, deviceScaleFactor:3, isMobile:true, hasTouch:true });
+await ctx.clock.install({ time: new Date('2026-09-01T20:00:00+04:00') });
+const p = await ctx.newPage();
+await p.addInitScript(stub(), [false, {}, false]);
+await p.goto('http://127.0.0.1:4320/ids-renamed.html', { waitUntil:'networkidle' });
+await p.waitForTimeout(2500);
+console.log((await p.innerText('body')).split('\n').slice(0, 22).join('\n'));
+await b.close();

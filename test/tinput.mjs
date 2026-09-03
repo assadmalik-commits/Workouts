@@ -11,8 +11,10 @@ const type = async (page, nth, value) => {
   await el.click();
   if (value !== '') await el.pressSequentially(value, { delay: 10 });
 };
+// The record is keyed by the exercise's id. The name is what the screen shows;
+// it is not what anything is stored under.
 const setsOf = (page) => page.evaluate(() => {
-  const e = (JSON.parse(localStorage.getItem('workout-logs') || '{}')['2026-08-31'] || {})['Pull-A']?.['Straight-Arm Pulldown'];
+  const e = (JSON.parse(localStorage.getItem('workout-logs') || '{}')['2026-08-31'] || {})['Pull-A']?.['straight-arm-pulldown'];
   return e ? e.sets : null;
 });
 

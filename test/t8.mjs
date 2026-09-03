@@ -14,8 +14,9 @@ const AT = '2026-08-31T14:00:00Z';
   // device. A reload of the published page does NOT keep them — the embedded
   // copy wins over the device copy — so that is deliberately not asserted here.
   report("B1' sets reach the device without pressing Save",
-    /"Straight-Arm Pulldown"/.test(ls || '') && /"25"/.test(ls || ''),
-    `written to storage without Save: ${/Straight-Arm Pulldown/.test(ls || '')}`);
+    // Keyed by id: the display name is not what reaches storage.
+    /"straight-arm-pulldown"/.test(ls || '') && /"25"/.test(ls || ''),
+    `written to storage without Save: ${/straight-arm-pulldown/.test(ls || '')}`);
   await browser.close();
 }
 

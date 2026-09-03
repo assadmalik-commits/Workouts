@@ -6,7 +6,7 @@ import {
 import { storage, storageIsDurable } from './storage';
 import { readEmbedded, hasEmbeddedData, getPublisher } from './sync';
 import { getStore, getDownloader, changedKeys, mergeState, dateOfKey, KEY } from './db';
-import { PROGRAM, DAYS, VARIANTS } from './plan';
+import { PROGRAM, DAYS, VARIANTS, ID_BY_NAME, EXERCISE_BY_ID, nameOfId } from './plan';
 import {
   SEXES, EMPTY_PROFILE, normaliseProfile, migrateWeights, ageOn, bmiOf, BMI_BANDS, BMI_CAVEAT,
   BMI_SOURCE, bandOf, healthyRange, readAvatar, initialsOf, plausibleHeight, plausibleWeight,
@@ -15,7 +15,7 @@ import {
 } from './profile';
 
 // Shown in the header so it's obvious at a glance which build is loaded.
-const APP_VERSION = '10.0';
+const APP_VERSION = '11.0';
 
 // The four places the app can be. Home is where it runs; the other three are
 // read, not worked in, which is why the session's Save bar belongs to Home
@@ -43,9 +43,10 @@ const ROTATION = VARIANTS.flatMap((variant) =>
   DAYS.map((day) => ({ day, variant, slot: slotKey(day, variant), label: `${day} ${variant}` }))
 );
 
-// Every exercise a session asks for, by slot.
+// Every exercise a session asks for, by slot — as ids, which is what the log
+// is keyed by. A name here would put the rename problem straight back.
 const SLOT_EXERCISES = Object.fromEntries(
-  ROTATION.map((r) => [r.slot, PROGRAM[r.day][r.variant].exercises.map((ex) => ex.name)])
+  ROTATION.map((r) => [r.slot, PROGRAM[r.day][r.variant].exercises.map((ex) => ex.id)])
 );
 
 // The week runs Sunday to Friday, one session a day, with Saturday off.
@@ -140,9 +141,9 @@ const isFilled = (entry) => setsOf(entry).some(setFilled);
 // less is a session in progress: one recorded exercise used to tick the day
 // off, move the rotation on, and count toward the week.
 const slotComplete = (slot, entries) => {
-  const names = SLOT_EXERCISES[slot];
-  if (!names || !names.length) return false;
-  return names.every((name) => isFilled((entries || {})[name]));
+  const ids = SLOT_EXERCISES[slot];
+  if (!ids || !ids.length) return false;
+  return ids.every((id) => isFilled((entries || {})[id]));
 };
 
 // A weight of 0 means the lift was done at bodyweight — dips, pull-ups,
@@ -245,12 +246,12 @@ const persistable = (logs) => {
     const keptSlots = {};
     for (const [slot, entries] of Object.entries(slots || {})) {
       const kept = {};
-      for (const [name, entry] of Object.entries(entries || {})) {
+      for (const [exId, entry] of Object.entries(entries || {})) {
         // Canonical in the record, whatever the keypad produced.
         const sets = setsOf(entry)
           .filter(setFilled)
           .map((set) => ({ w: num(set.w), r: num(set.r) }));
-        if (sets.length) kept[name] = { sets };
+        if (sets.length) kept[exId] = { sets };
       }
       if (Object.keys(kept).length) keptSlots[slot] = kept;
     }
@@ -361,9 +362,15 @@ const takePlace = () => {
   }
 };
 
-// Exercises that have been renamed since they were first logged. Without this
-// the sets stay in the record under the old name, still counting the session
-// as trained, while showing nowhere on screen.
+// The prefix for a stored key that is not an exercise the programme lists: a
+// name logged before ids existed that no longer matches anything. Never a real
+// id, because a real id is a slug and cannot contain a colon.
+const UNLISTED = 'unlisted:';
+
+// Exercises renamed before the log was keyed by id. This map is now frozen:
+// it exists only so sessions written under those old names can be found during
+// the one-time migration below. A rename made from here on needs no entry,
+// because a rename no longer changes the key.
 const RENAMED = {
   'Deficit Push-Ups / Weighted Dips': 'Deficit Push-Ups',
   'Weighted Pull-Ups / Lat Pulldown': 'Lat Pulldown',
@@ -385,17 +392,27 @@ function migrate(logs) {
       const target = DAYS.includes(key) ? slotKey(key, 'A') : key;
       if (DAYS.includes(key)) changed = true;
       const converted = {};
-      for (const [rawName, entry] of Object.entries(entries || {})) {
-        const exName = RENAMED[rawName] || rawName;
-        if (exName !== rawName) changed = true;
+      for (const [rawKey, entry] of Object.entries(entries || {})) {
+        // Already an id: written since the migration, leave it alone.
+        // Otherwise it is a name, from before ids existed — put it through the
+        // frozen rename map first, then look up its id.
+        //
+        // A name that matches nothing is still the lifter's work, so it keeps
+        // its sets under a key that cannot collide with a real id and that
+        // carries the name it was logged under. Dropping it here would delete
+        // training that the app itself still counts as done.
+        const exId = EXERCISE_BY_ID[rawKey]
+          ? rawKey
+          : ID_BY_NAME[RENAMED[rawKey] || rawKey] || `${UNLISTED}${RENAMED[rawKey] || rawKey}`;
+        if (exId !== rawKey) changed = true;
         if (Array.isArray(entry?.sets)) {
-          converted[exName] = entry;
+          converted[exId] = entry;
           continue;
         }
         // The old shape said "s sets of r at w", so that is what it becomes.
         // Any set that was actually different can now be corrected in place.
         const count = Math.max(1, Math.min(20, Number(entry?.s) || 1));
-        converted[exName] = {
+        converted[exId] = {
           sets: Array.from({ length: count }, () => ({ w: entry?.w ?? '', r: entry?.r ?? '' })),
         };
         changed = true;
@@ -441,7 +458,7 @@ export default function WorkoutTracker() {
   const [view, setView] = useState('home');
   const [tab, setTab] = useState('Push');
   const [variant, setVariant] = useState('A');
-  const [logs, setLogs] = useState({}); // { date: { "Push-A": { exName: {w,r,s} } } }
+  const [logs, setLogs] = useState({}); // { date: { "Push-A": { exerciseId: { sets } } } }
   const [bwLogs, setBwLogs] = useState([]); // [{date, weight, notes}]
   const [date, setDate] = useState(() => localDateStr());
   // The date follows the clock until a past session is picked deliberately.
@@ -517,6 +534,9 @@ export default function WorkoutTracker() {
   const [heightInput, setHeightInput] = useState('');
   const [heightUnlocked, setHeightUnlocked] = useState(false);
   const [exportState, setExportState] = useState(null);
+  // When the record was last written out to a file the lifter actually holds.
+  // Null means never, which is the same prompt as long ago.
+  const [lastExportAt, setLastExportAt] = useState(null);
   const [showDiag, setShowDiag] = useState(false);
   const [durable, setDurable] = useState(true);
   const publisherRef = useRef(null);
@@ -627,6 +647,8 @@ export default function WorkoutTracker() {
       // Nothing is applied unless this device actually chose it. With no
       // choice, the boot script's default stands until the store speaks.
       // The cookie stands in when the device copy has lost it.
+      const savedExport = await load('last-export', null);
+      if (typeof savedExport === 'string') setLastExportAt(savedExport);
       const savedTheme = await load('theme', null);
       const deviceTheme = isThemePref(savedTheme) ? savedTheme : null;
       const deviceChose = isThemePref(deviceTheme);
@@ -718,7 +740,19 @@ export default function WorkoutTracker() {
         }
       }
 
-      const read = await store.readAll();
+      const readRaw = await store.readAll();
+      // The store holds whatever was last written to it, which for a log
+      // written before ids existed means exercise names. The device copy has
+      // been migrated on the way in since v1; the store's had not, so the
+      // merge compared id-keyed local sessions against name-keyed remote ones,
+      // matched nothing, and showed an empty week over a full record.
+      //
+      // Nothing is written back here. The migration marks the days it changed
+      // and the flush below carries them up, so the store is corrected by the
+      // same path any other edit takes.
+      const read = readRaw.ok
+        ? { ...readRaw, state: { ...readRaw.state, 'workout-logs': migrate(readRaw.state['workout-logs']).logs } }
+        : readRaw;
       note('store read', {
         ok: read.ok,
         code: read.code || null,
@@ -761,6 +795,13 @@ export default function WorkoutTracker() {
       setBwLogs(merged['bodyweight-logs']);
       setProfile(normaliseProfile(merged.profile));
       note('merged', { theme: merged.theme, days: Object.keys(merged['workout-logs'] || {}).length });
+      // The store's stamp wins when this device has none: a backup taken on
+      // this app is a fact about the record, not about the device.
+      if (typeof read.state.lastExportAt === 'string' &&
+          (!savedExport || read.state.lastExportAt > savedExport)) {
+        setLastExportAt(read.state.lastExportAt);
+        save('last-export', read.state.lastExportAt);
+      }
       if (isThemePref(merged.theme)) {
         setThemePref(merged.theme);
         // And write it down. Without this the device never learns what the
@@ -877,9 +918,9 @@ export default function WorkoutTracker() {
     for (const [d, slots] of Object.entries(logs)) {
       if (d > today || trainedDays.has(d)) continue;
       for (const [which, entries] of Object.entries(slots)) {
-        const names = SLOT_EXERCISES[which] || [];
-        const done = names.filter((n) => isFilled(entries[n])).length;
-        if (done) days[d] = { slot: which, done, total: names.length };
+        const ids = SLOT_EXERCISES[which] || [];
+        const done = ids.filter((id) => isFilled(entries[id])).length;
+        if (done) days[d] = { slot: which, done, total: ids.length };
       }
     }
     return days;
@@ -1051,55 +1092,55 @@ export default function WorkoutTracker() {
 
   const progressOn = (iso, which, exercises) => {
     const entries = (logs[iso] || {})[which] || {};
-    const names = (exercises || []).map((ex) => ex.name);
-    return { done: names.filter((n) => isFilled(entries[n])).length, total: names.length };
+    const ids = (exercises || []).map((ex) => ex.id);
+    return { done: ids.filter((id) => isFilled(entries[id])).length, total: ids.length };
   };
 
-  const getEntry = (exName) =>
-    (logs[date] && logs[date][slot] && logs[date][slot][exName]) || { sets: [] };
+  const getEntry = (exId) =>
+    (logs[date] && logs[date][slot] && logs[date][slot][exId]) || { sets: [] };
 
   // Everything recorded for the session on screen: the program's exercises in
-  // their own order, then anything logged under a name the program no longer
-  // has. Work that counts the session as trained must be visible somewhere,
-  // even if the program has moved on since it was done.
+  // their own order, then anything logged against an exercise the program no
+  // longer lists. Work that counts the session as trained must be visible
+  // somewhere, even if the program has moved on since it was done.
   const recorded = () => {
     const entries = (logs[date] || {})[slot] || {};
-    const planned = (session?.exercises || []).map((ex) => ex.name);
-    const orphaned = Object.keys(entries).filter((name) => !planned.includes(name));
+    const planned = (session?.exercises || []).map((ex) => ex.id);
+    const orphaned = Object.keys(entries).filter((id) => !planned.includes(id));
     return [...planned, ...orphaned]
-      .filter((name) => isFilled(entries[name]))
-      .map((name) => ({ name, entry: entries[name] }));
+      .filter((id) => isFilled(entries[id]))
+      .map((id) => ({ id, name: nameOfId(id), entry: entries[id] }));
   };
 
-  const writeSets = (exName, sets) => {
+  const writeSets = (exId, sets) => {
     setLogs((prev) => {
       const next = { ...prev };
       next[date] = { ...(next[date] || {}) };
       next[date][slot] = { ...(next[date][slot] || {}) };
-      next[date][slot][exName] = { sets };
+      next[date][slot][exId] = { sets };
       return next;
     });
   };
 
-  const updateSet = (exName, index, field, value) => {
+  const updateSet = (exId, index, field, value) => {
     const clean = cleanNumber(value, field === 'w', field === 'w' ? MAX.setWeight : MAX.reps);
     if (clean === null) return;
-    const sets = setsOf(getEntry(exName)).map((set, i) =>
+    const sets = setsOf(getEntry(exId)).map((set, i) =>
       i === index ? { ...set, [field]: clean } : set
     );
-    writeSets(exName, sets);
+    writeSets(exId, sets);
   };
 
   // A new set starts from the one before it, so an unchanged set is a tap and
   // only a changed one needs typing.
-  const addSet = (exName) => {
-    const sets = setsOf(getEntry(exName));
+  const addSet = (exId) => {
+    const sets = setsOf(getEntry(exId));
     const previous = sets[sets.length - 1];
-    writeSets(exName, [...sets, previous ? { ...previous } : { w: '', r: '' }]);
+    writeSets(exId, [...sets, previous ? { ...previous } : { w: '', r: '' }]);
   };
 
-  const removeSet = (exName, index) =>
-    writeSets(exName, setsOf(getEntry(exName)).filter((_, i) => i !== index));
+  const removeSet = (exId, index) =>
+    writeSets(exId, setsOf(getEntry(exId)).filter((_, i) => i !== index));
 
   // Every earlier date that has entries for the day/variant on screen, newest
   // first — the running record for this specific session.
@@ -1108,17 +1149,17 @@ export default function WorkoutTracker() {
       Object.entries(logs)
         .filter(([d]) => d < date)
         .map(([d, byDay]) => {
-          // Program order, then anything logged under a name it no longer has.
-          // Storage order is an accident — renaming an exercise moves its key
-          // to the end of the object — and must not decide what is shown.
+          // Program order, then anything logged against an exercise it no
+          // longer lists. Storage order is an accident and must not decide
+          // what is shown.
           const entries = byDay[slot] || {};
           const planned = SLOT_EXERCISES[slot] || [];
-          const orphaned = Object.keys(entries).filter((n) => !planned.includes(n));
+          const orphaned = Object.keys(entries).filter((id) => !planned.includes(id));
           return {
             date: d,
             entries: [...planned, ...orphaned]
-              .filter((name) => isFilled(entries[name]))
-              .map((name) => ({ name, ...entries[name] })),
+              .filter((id) => isFilled(entries[id]))
+              .map((id) => ({ id, name: nameOfId(id), ...entries[id] })),
           };
         })
         .filter((h) => h.entries.length > 0)
@@ -1127,9 +1168,9 @@ export default function WorkoutTracker() {
   );
 
   // What was lifted on this exercise last time, so the next set has a target.
-  const lastFor = (exName) => {
+  const lastFor = (exId) => {
     for (const h of history) {
-      const found = h.entries.find((e) => e.name === exName);
+      const found = h.entries.find((e) => e.id === exId);
       if (found) return { ...found, date: h.date };
     }
     return null;
@@ -1163,6 +1204,15 @@ export default function WorkoutTracker() {
   // it and the phone together, and would be wrong on another device.
   const themeRef = useRef(themePref);
   themeRef.current = themePref;
+  const lastExportRef = useRef(lastExportAt);
+  lastExportRef.current = lastExportAt;
+  // Thirty days, or never. Long enough that it is not nagging, short enough
+  // that a lost phone costs at most a month. Counted in whole days from the
+  // stamp, in the lifter's own timezone like every other date here.
+  const daysSinceExport = lastExportAt
+    ? Math.floor((new Date(today) - new Date(localDateStr(new Date(lastExportAt)))) / 86400000)
+    : null;
+  const exportDue = daysSinceExport === null || daysSinceExport >= 30;
 
   // A complete state for the store to write from. writeKeys only touches the
   // keys it is handed, but it reads them all out of one object, so a caller
@@ -1172,6 +1222,11 @@ export default function WorkoutTracker() {
     'bodyweight-logs': bw ?? bwRef.current,
     profile: prof ?? profileRef.current,
     theme: th ?? themeRef.current,
+    // The theme and the export stamp share one document, and writing that
+    // document replaces it. So every state handed to a write must carry the
+    // stamp, or changing the appearance silently forgets when the lifter last
+    // backed up and the nudge starts lying.
+    lastExportAt: lastExportRef.current,
   });
 
   // Write the named keys, holding each in the pending set until the store
@@ -1418,7 +1473,9 @@ export default function WorkoutTracker() {
         'workout-logs': persistable(logs),
         'bodyweight-logs': weightHistory,
         profile,
-        theme,
+        // The preference, not the colour it resolves to. 'system' restored onto
+        // a phone set the other way must still mean "follow the phone".
+        theme: themePref,
         exportedAt: new Date().toISOString(),
       },
       null,
@@ -1428,6 +1485,14 @@ export default function WorkoutTracker() {
     if (res.ok) {
       setExportState('saved');
       setTimeout(() => setExportState(null), 1500);
+      // Only a file that was actually saved resets the clock. Dismissing the
+      // share sheet rejects with 'declined', and a dismissal is an answer, not
+      // a backup — stamping it would quietly promise a copy that is not there.
+      const at = new Date().toISOString();
+      setLastExportAt(at);
+      save('last-export', at);
+      lastExportRef.current = at;
+      flushKeys([KEY.lastExport], stateOf());
       return;
     }
     // Declining the prompt is an answer, not a fault. Only a real refusal is
@@ -2192,24 +2257,24 @@ export default function WorkoutTracker() {
 
                 <div className="mt-3 space-y-1.5">
                   {session.exercises.map((ex, i) => {
-                    const entry = getEntry(ex.name);
+                    const entry = getEntry(ex.id);
                     const sets = setsOf(entry);
-                    const isOpen = openEx === ex.name;
-                    const last = lastFor(ex.name);
+                    const isOpen = openEx === ex.id;
+                    const last = lastFor(ex.id);
                     const filled = isFilled(entry);
                     return (
                       <div
-                        key={ex.name}
+                        key={ex.id}
                         className={`bg-surface rounded-xl border overflow-hidden ${
                           filled ? 'border-mint/40' : 'border-line'
                         }`}
                       >
                         <button
                           onClick={() => {
-                            const next = isOpen ? null : ex.name;
+                            const next = isOpen ? null : ex.id;
                             setOpenEx(next);
                             // Opening an untouched exercise offers its first set.
-                            if (next && setsOf(getEntry(ex.name)).length === 0) addSet(ex.name);
+                            if (next && setsOf(getEntry(ex.id)).length === 0) addSet(ex.id);
                           }}
                           className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
                         >
@@ -2262,7 +2327,7 @@ export default function WorkoutTracker() {
                                   min="0"
                                   value={set.w}
                                   placeholder="0"
-                                  onChange={(e) => updateSet(ex.name, si, 'w', e.target.value)}
+                                  onChange={(e) => updateSet(ex.id, si, 'w', e.target.value)}
                                   className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                                 />
                                 <span className="text-[13px] font-semibold text-dim shrink-0">kg</span>
@@ -2272,12 +2337,12 @@ export default function WorkoutTracker() {
                                   min="0"
                                   value={set.r}
                                   placeholder="0"
-                                  onChange={(e) => updateSet(ex.name, si, 'r', e.target.value)}
+                                  onChange={(e) => updateSet(ex.id, si, 'r', e.target.value)}
                                   className="min-w-0 flex-1 max-w-[5.5rem] bg-raised border border-line rounded-lg px-2 py-1.5 text-base font-bold text-center nums focus:border-mint focus:outline-none"
                                 />
                                 <span className="text-[13px] font-semibold text-dim shrink-0">reps</span>
                                 <button
-                                  onClick={() => removeSet(ex.name, si)}
+                                  onClick={() => removeSet(ex.id, si)}
                                   aria-label={`Remove set ${si + 1}`}
                                   className="w-7 h-7 shrink-0 rounded-lg text-dim flex items-center justify-center ml-auto"
                                 >
@@ -2288,7 +2353,7 @@ export default function WorkoutTracker() {
 
                             <div className="flex items-center gap-2 mt-2">
                               <button
-                                onClick={() => addSet(ex.name)}
+                                onClick={() => addSet(ex.id)}
                                 className="border border-dashed border-line rounded-lg px-3 py-1.5 text-[13px] font-bold text-dim flex items-center justify-center gap-1.5"
                               >
                                 <Plus size={15} /> Add set
@@ -2846,6 +2911,18 @@ export default function WorkoutTracker() {
 
           {/* Your data, which is what this screen is about once the details
               above are set. */}
+          {downloader && exportDue && (
+            // A quiet line, above the button that answers it. Deliberately not
+            // on Home: that screen is used mid-set with a barbell waiting, and
+            // nothing belongs there that is not the session. If this turns out
+            // to be too easy to miss, the next step is a mark on the Profile
+            // tab, not a louder Profile.
+            <p className="text-xs text-dim text-center px-2" aria-label="Export reminder">
+              {lastExportAt
+                ? `Last backed up ${daysSinceExport} days ago.`
+                : 'This log has never been backed up.'}
+            </p>
+          )}
           {downloader && (
             <button
               onClick={exportLog}

@@ -299,7 +299,10 @@ weighs. The migrated entry has no `notes` key, which is what stops it happening
 again — without that marker it would re-date the weight every morning, which is
 a worse lie than the stale date it replaced.
 
-## Next: stable exercise IDs
+## Done in v11.0: stable exercise IDs
+
+*(The plan is kept below as it was written, because it turned out to be right
+about the cost and wrong about nothing. What actually happened follows it.)*
 
 **Do this before anything else that touches exercises.**
 
@@ -1116,3 +1119,91 @@ Wanting a dark log without the flash means setting the phone to dark and
 leaving Appearance on System. That is not a workaround dressed up as a feature:
 it is the only arrangement in which the frame before ours is already the right
 colour.
+
+
+## v11.0 — the log is keyed by the exercise, not by its name
+
+Every exercise in `plan.js` now carries an `id`, and that id is the one thing in
+the file that cannot be edited. Names are display-only. Renaming an exercise,
+moving it between days, rewriting its target or its note — none of it touches
+the record, because none of it is what identifies the exercise.
+
+`RENAMED` is frozen rather than deleted: it is how a session written under an
+old name is still found during the one-time migration. Nothing needs adding to
+it again.
+
+### What the migration had to survive
+
+His record: 96 sets across 4 days, keyed by name. The suite runs against that
+record, not a fixture standing in for it, and counts both sides:
+
+```
+every set survives the migration    96 before, 96 after
+every day survives                  4 before, 4 after
+nothing is keyed by a name          all ids
+the week counter is unchanged       4/6 this week
+```
+
+A name that matches nothing in the programme is kept under `unlisted:<name>`
+rather than dropped. Those sets are still the lifter's, and the app already
+counts the session they belong to as trained — deleting them would leave a day
+marked done with nothing in it, which is the bug that made this work necessary.
+
+### The bug the tests caught, which would have shown him an empty week
+
+The device copy has gone through `migrate()` since v1. **The store's copy never
+did.** So after the change the merge compared id-keyed local sessions against
+name-keyed remote ones, matched nothing, and rendered `0/6 this week` over a
+full record. His store holds name-keyed sessions right now; this would have been
+the first thing he saw.
+
+The store's log now goes through the same migration on the way in, and the days
+it changes are flushed back up by the ordinary path. Seven suites failed on
+this; only one of the seventeen failing checks was fixture drift.
+
+### Making the rename test actually test the rename
+
+Two false greens on the way, both worth recording:
+
+- The first version replaced the exercise's name **across the whole page**,
+  which renamed the data along with the programme. A name-keyed build passed it.
+  The rename has to be applied to the bundle only.
+- The second fed the rename a *pre-migration*, name-keyed log, so the failure it
+  saw was a name that could not be resolved during migration — a real case, but
+  not this one. The rename test needs an already-migrated log, because "a rename
+  is free" is a claim about the state the app is in from now on.
+
+Corrected, it reads `6 logged weights before, 6 after` here and `6 before, 5
+after` on the name-keyed build: the renamed exercise's sets stranded, its row
+empty.
+
+`trenames` now asserts the **id** each old name lands on, and those ids are
+written out in the suite rather than imported from the programme. A test that
+read them from the file the app reads could never notice one being changed —
+and changing an id silently reassigns somebody's training history.
+
+## v11.0 — the backup nudge
+
+The log lives in a store the lifter does not own and cannot reach. The export is
+the only copy he holds, so the app says when there isn't one: a quiet line on
+Profile, above the button that answers it, when there is no export on record or
+the last one is more than 30 days old.
+
+Not on Home. That screen is used mid-set with a barbell waiting, and nothing
+belongs on it that is not the session. If this turns out to be too easy to miss,
+the next step is a mark on the Profile tab, not a louder Profile.
+
+**Only a saved file resets the clock.** `downloads.save()` rejects with
+`declined` when the share sheet is dismissed, and a dismissal is an answer, not
+a backup — stamping it would promise a copy that does not exist. The suite
+asserts both halves.
+
+`lastExportAt` shares `meta/prefs` with the theme, and writing that document
+replaces it — so every state handed to a write carries the stamp. Without that,
+changing the appearance would silently forget when the lifter last backed up and
+the nudge would start lying. That is why it is in `stateOf` rather than passed
+at the call site.
+
+The export also now carries the theme *preference* rather than the colour it
+resolves to: 'system' restored onto a phone set the other way must still mean
+"follow the phone".
