@@ -896,7 +896,7 @@ stop describing the app without anyone noticing.
 than written from memory. Its whole job is to mirror the live store, and a
 mirror that has drifted is worse than no mirror.
 
-### v9.8 — and not under his finger
+## v9.8 — and not under his finger
 
 The rebake worked and was in the wrong place. Publishing on the tap meant a
 reload about a second after choosing Light or Dark: a flicker on the very screen

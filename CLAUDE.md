@@ -22,10 +22,37 @@ has already been tried and rejected.
 
 ```bash
 npm run build            # check the exit status, see below
+npm test                 # builds, serves, runs every suite in test/
 ```
 
-Tests are Playwright scripts driven against the built app. Chromium only, at
-`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, with `--no-sandbox`.
+Tests are Playwright scripts driven against the built app, and they live in
+`test/`. Chromium only, at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`,
+with `--no-sandbox`. `npm test` builds first, writes `test/art/current.html`,
+starts the two static servers the suites expect on 4320 and 4300, and runs
+everything; pass suite filenames to run a subset.
+
+`test/run-all.mjs` is the runner, `test/lib.mjs` and `test/dbstub.mjs` the
+fixtures and the artifact-runtime stand-in, `test/bake.mjs` the page builders
+(see below), and `test/screencast.mjs` + `test/png.mjs` the frame recorder —
+CDP screencast decoded to real pixels, which is the only instrument that can
+see a frame painted while the page's main thread is blocked.
+
+**Every suite reads `test/art/current.html`, which the build writes.** Pinning a
+suite to a version-numbered page is how `tdb` spent four versions asserting
+things about code that had already been replaced, and how two `repro` suites
+went on testing publish-on-save for twelve versions after it was removed. Do not
+reintroduce one.
+
+**What the page carries is part of the scenario, not a constant.** `pageFor`
+swaps the baked theme and `pageWith` the embedded block, both in the bytes of
+the build under test. A suite that reads the lifter's live record moves every
+time he trains: `tdb` once reported a migration bug that was really its own
+fixture walking. Counting suites use `test/fixtures/three-day.json`, which is
+frozen.
+
+`test/fixtures/live-current.json` is his real record and is **not committed** —
+it is gitignored, and `tlive`, whose whole job is to mirror the live store,
+skips without it. Rebuild it from the published page when you need it.
 
 ## Rules learned the hard way
 
