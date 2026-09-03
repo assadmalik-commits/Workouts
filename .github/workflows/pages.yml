@@ -41,7 +41,13 @@ jobs:
       # last command, so a broken build would report success and publish a
       # stale bundle.
       - run: npm run build
+      # enablement turns Pages on if it is off, so the first deploy does not
+      # need someone to visit the settings page first. If the token is not
+      # allowed to, this step fails with a clear message and the setting is
+      # Settings -> Pages -> Source: GitHub Actions.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
