@@ -36,7 +36,7 @@ await page.addInitScript(() => {
 });
 // A store that takes 3.2 seconds, like his.
 await page.addInitScript(stub(), [false, { 'meta/prefs': { theme:'dark', updatedAt:'x' },
-  'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' },
+  'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' },
   'sessions/2026-08-30': { date:'2026-08-30', slots:{ 'Push-A': { 'Incline Dumbbell Press': { sets:[{w:'10',r:'10'}] } } }, updatedAt:'x' } }, false]);
 await page.route('**/hosted.html', (route) => route.fulfill({ contentType:'text/html', body:
   '<!doctype html><html><head><meta charset=utf8><style>:root{color-scheme:light}body{margin:0;background:#faf9f5;color:#141413}</style></head><body>\n' + html + '\n</body></html>' }));
@@ -70,7 +70,7 @@ await b.close();
   });
   // Page says dark; the lifter has since chosen light and the store knows.
   await p2.addInitScript(stub(), [false, { 'meta/prefs': { theme:'light', updatedAt:'x' },
-    'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' } }, false]);
+    'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' } }, false]);
   await p2.route('**/hosted.html', (route) => route.fulfill({ contentType:'text/html', body:
     '<!doctype html><html><head><meta charset=utf8><style>body{margin:0;background:#faf9f5}</style></head><body>\n' + html + '\n</body></html>' }));
   await p2.goto('http://127.0.0.1:4320/hosted.html', { waitUntil:'commit' });

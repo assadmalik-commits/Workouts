@@ -20,7 +20,11 @@ let fails = 0; const R = (n,p,d) => { if(!report(n,p,d)) fails++; };
   R('old entries carry across to the new name', /Lat Pulldown\n40kg × 10\n45kg × 8/.test(txt), (txt.match(/Lat Pulldown\n[^\n]*/) || ['not shown'])[0]);
   R('and nothing is left under the old name', !/Weighted Pull-Ups/.test(txt), 'old name gone');
   const stored = await page.evaluate(() => localStorage.getItem('workout-logs'));
-  R('the stored record is rewritten too', /"Lat Pulldown"/.test(stored) && !/Weighted Pull-Ups/.test(stored), 'migrated on disk');
+  // Rewritten under the exercise's id, not under either name — which is what
+  // makes the next rename free instead of another migration entry.
+  R('the stored record is rewritten to the id',
+    /"lat-pulldown"/.test(stored) && !/Weighted Pull-Ups/.test(stored) && !/"Lat Pulldown"/.test(stored),
+    'migrated on disk');
   await browser.close();
 }
 console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAILURE(S)`);

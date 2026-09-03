@@ -161,9 +161,9 @@ const readBack = async (page) => {
 
 // Without a photo the header still says who this is.
 {
-  const { browser, page } = await open({ at: MON, bw: [], profile: { name: 'Assad Malik' } });
+  const { browser, page } = await open({ at: MON, bw: [], profile: { name: 'Sample Lifter' } });
   const initials = await page.evaluate(() => document.querySelector('header span.rounded-full span')?.textContent.trim());
-  R('initials stand in for a missing photo', initials === 'AM', String(initials));
+  R('initials stand in for a missing photo', initials === 'SL', String(initials));
   await browser.close();
 }
 
@@ -222,7 +222,7 @@ const readBack = async (page) => {
 // explain it — a reading with no classification beside it is worse than none.
 {
   const { browser, page } = await open({ at: MON, bw: [{ date: '2026-08-30', weight: '69' }],
-    profile: { name: 'Assad Malik', dob: '1995-03-12', sex: 'Male', heightCm: '178' } });
+    profile: { name: 'Sample Lifter', dob: '1995-03-12', sex: 'Male', heightCm: '178' } });
   await nav(page, 'Profile');
   const txt = await bodyText(page);
   R('the profile does not explain how the weight log is keyed',

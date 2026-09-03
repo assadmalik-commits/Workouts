@@ -21,7 +21,7 @@ const embedded = embeddedFixture;
 // The store knows about a session the page has never heard of — exactly what
 // happens the moment the lifter trains after a publish.
 const store = { 'meta/prefs': { theme:'system', updatedAt:'x' },
-  'meta/profile': { name:'Assad Malik', dob:'1979-10-15', sex:'Male', heightCm:'173', updatedAt:'x' },
+  'meta/profile': { name:'Sample Lifter', dob:'1986-04-22', sex:'Male', heightCm:'173', updatedAt:'x' },
   'meta/bodyweight': { entries: embedded['bodyweight-logs'], updatedAt:'x' } };
 for (const [date, slots] of Object.entries(embedded['workout-logs'])) {
   store[`sessions/${date}`] = { date, slots, updatedAt: 'x' };

@@ -87,6 +87,13 @@ export const stub = ({ noDb = false, seedDocs = {}, fail = false } = {}) =>
               save: async (req) => {
                 window.__calls.download = req.filename;
                 window.__calls.downloadBody = String(req.data);
+                // A dismissed share sheet is a real outcome the contract
+                // reports, and the app has to tell it apart from a save.
+                if (window.__declineDownload) {
+                  const e = new Error('declined');
+                  e.code = 'declined';
+                  throw e;
+                }
                 return { status: 'saved' };
               },
             };

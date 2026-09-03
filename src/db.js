@@ -31,6 +31,7 @@ export const KEY = {
   photo: 'photo',
   bodyweight: 'bodyweight',
   theme: 'theme',
+  lastExport: 'last-export',
 };
 
 export const dateOfKey = (key) =>
@@ -83,6 +84,7 @@ export async function getStore() {
       'bodyweight-logs': [],
       profile: null,
       theme: null,
+      lastExportAt: null,
     };
     let found = 0;
 
@@ -126,8 +128,12 @@ export async function getStore() {
     if (prefsDoc.exists) {
       // 'system' is a choice too: it says "follow the phone", which is not the
       // same as never having chosen.
-      const t = (prefsDoc.data() || {}).theme;
+      const prefs = prefsDoc.data() || {};
+      const t = prefs.theme;
       if (t === 'dark' || t === 'light' || t === 'system') state.theme = t;
+      // When the record was last written out to a file the lifter holds. Only
+      // ever stamped on a successful export.
+      if (typeof prefs.lastExportAt === 'string') state.lastExportAt = prefs.lastExportAt;
     }
 
     // An empty store is the signal to migrate what the page is carrying into
@@ -167,9 +173,17 @@ export async function getStore() {
             updatedAt: stamp(),
           })
         );
-      } else if (key === KEY.theme) {
+      } else if (key === KEY.theme || key === KEY.lastExport) {
+        // Both live in meta/prefs, and set() replaces the whole document — so
+        // writing one has to carry the other or it is deleted. This is not
+        // hypothetical: the theme and the export stamp are written on different
+        // occasions, minutes or weeks apart.
         res = await once(() =>
-          db.doc('meta/prefs').set({ theme: state.theme, updatedAt: stamp() })
+          db.doc('meta/prefs').set({
+            theme: state.theme,
+            ...(state.lastExportAt ? { lastExportAt: state.lastExportAt } : {}),
+            updatedAt: stamp(),
+          })
         );
       } else {
         continue;

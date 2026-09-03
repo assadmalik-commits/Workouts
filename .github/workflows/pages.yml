@@ -1,0 +1,63 @@
+# Build the app and publish it to GitHub Pages, so it can be added to the home
+# screen and opened without signal.
+#
+# This does NOT replace the artifact. The artifact keeps the record in its store
+# until there is a backend; the Pages build keeps its record on the device. The
+# two are moved between each other with Export and Import on the Profile screen.
+name: Deploy to Pages
+
+on:
+  push:
+    branches: [claude/workout-tracker-app-rgpvc6]
+  workflow_dispatch:
+
+# One deployment at a time, and never cancel one halfway: a half-published site
+# is a phone that opens to a broken app.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Playwright is a devDependency for the test suite, and npm ci installs
+      # devDependencies because the build needs Vite. Its postinstall would
+      # otherwise download three browsers to build a static site.
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      # Never pipe a build anywhere: a pipeline exits with the status of its
+      # last command, so a broken build would report success and publish a
+      # stale bundle.
+      - run: npm run build
+      # enablement turns Pages on if it is off, so the first deploy does not
+      # need someone to visit the settings page first. If the token is not
+      # allowed to, this step fails with a clear message and the setting is
+      # Settings -> Pages -> Source: GitHub Actions.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
